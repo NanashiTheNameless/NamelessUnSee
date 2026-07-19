@@ -1,0 +1,172 @@
+<% var pageTitle = 'NamelessUnSee - Terms of Service'; %>
+<%- include('partials/legal-head', { pageTitle: pageTitle }) %>
+
+  <h1>Terms of Service</h1>
+  <p class="muted">Last updated: 2026-07-19. These terms govern your use of this
+    NamelessUnSee instance operated by <strong><%= operator.name %></strong><% if (operator.jurisdiction) { %>,
+    based in <%= operator.jurisdiction %><% } %>. The operator should have these
+    reviewed by qualified counsel for their jurisdiction before public operation.</p>
+
+  <div class="warn">
+    By continuing past the warning page, or by creating an account, you agree to
+    these Terms and to the <a href="/privacy">Privacy Policy</a>. If you do not
+    agree, do not continue and do not use this service.
+  </div>
+
+  <h2>1. What this service is</h2>
+  <p>NamelessUnSee lets registered users share content (images and videos) on a
+    temporary, traceable basis. Each time shared content is viewed, the viewer is
+    served a copy that is watermarked with information identifying them (including
+    their IP address, approximate location, and device), and the visit is logged.
+    The purpose is to deter and trace the unauthorised redistribution of shared
+    content. The service does not deliver, and does not offer any means to obtain,
+    an un-watermarked copy of shared content.</p>
+
+  <h2>2. Eligibility</h2>
+  <ul>
+    <li>You must be at least the age of majority in your jurisdiction, and legally
+      capable of entering into these Terms.</li>
+    <li>Access is not permitted through VPNs, proxies, Tor, or other anonymising
+      or datacenter networks. Access may be refused where your connection cannot
+      be identified.</li>
+    <li>The operator may block, suspend, or ban any account, email address, IP
+      address, or network at their discretion, whether from holding an account or
+      from accessing the service at all.</li>
+  </ul>
+
+  <h2>3. Viewing shared images</h2>
+  <ul>
+    <li>Before viewing, you must affirmatively agree to these Terms and the
+      Privacy Policy. Your agreement is recorded for the duration of your browsing
+      session.</li>
+    <li>You are shown a watermarked, per-viewer copy. You must not attempt to
+      remove, obscure, crop out, alter, or otherwise circumvent the watermark, and
+      you must not attempt to bypass the identification or logging described in the
+      Privacy Policy.</li>
+    <li>You must not use automated means (bots, scrapers, or similar) to access
+      images. Proof-of-work checks are applied at the warning page and again
+      before an image is rendered, to deter automated access.</li>
+    <li>You must not redistribute, republish, or share any image or watermarked
+      copy obtained through the service without authorisation from the person who
+      shared it.</li>
+  </ul>
+
+  <h2>4. Accounts and uploads</h2>
+  <ul>
+    <li>Uploading requires an account. New accounts must be approved by an
+      administrator before they can be used; approval may be refused or revoked for
+      any reason.</li>
+    <li>You are responsible for your account credentials and for all activity under
+      your account. Notify the operator promptly of any unauthorised use.</li>
+    <li>Logging in requires a second factor: a code sent to your account email
+      by default, or an authenticator app (TOTP) if you enroll one. Account
+      recovery (password, email, or username) is performed via codes sent to
+      your account email.</li>
+    <li>You may set, per image, a retention period and/or a maximum number of views
+      after which the image is deleted. By default the retention timer begins on
+      the first view; you may choose to start it immediately on upload. Deletion is
+      best-effort and not guaranteed to be instantaneous.</li>
+    <li>Uploads and total stored data are subject to per-account size limits,
+      which administrators may adjust per user.</li>
+    <li>If you find that media you shared has been redistributed without
+      authorisation, you may report it through the service, attaching screenshot
+      evidence. Reports must be truthful; knowingly false reports are a breach of
+      these Terms. Reports are reviewed by administrators.</li>
+  </ul>
+
+  <h2>5. Content you upload</h2>
+  <p>You retain your rights in what you upload. By uploading, you represent and
+    warrant that:</p>
+  <ul>
+    <li>You own or have all necessary rights and permissions to the image and to
+      have it processed, watermarked, stored, and served as described here.</li>
+    <li>The image, and your use of the service in connection with it, does not and
+      will not violate any law or the rights of any person, including intellectual
+      property, privacy, and publicity rights.</li>
+    <li>The image does not contain, without limitation: child sexual abuse
+      material; non-consensual intimate imagery; content that harasses, threatens,
+      defames, or endangers any person; malware; or content whose sharing is
+      unlawful.</li>
+  </ul>
+  <p>Uploads may be scanned automatically at upload time (against an
+    operator-managed blocklist of known-prohibited content, and optionally by a
+    locally run content classifier). Flagged uploads may be withheld from viewing
+    pending review, and administrators may access uploaded media- including the
+    original file- for moderation, abuse handling, and site operation. The
+    operator may remove or quarantine any upload.</p>
+  <p>You are responsible for your own compliance with data-protection law with
+    respect to any personal data contained in images you upload and any access logs
+    you review. As between you and the operator, the person who uploads and shares
+    an image is the controller of the personal data collected from viewers of that
+    image; the operator provides the platform.</p>
+
+  <h2>6. Acceptable use</h2>
+  <p>You must not use the service to: break any law; infringe others' rights; stalk,
+    harass, dox, or endanger anyone; upload prohibited content; interfere with,
+    probe, or attack the service or its infrastructure; evade a ban; or violate the
+    ethical-use and non-commercial conditions of the project licence (see §9).</p>
+
+  <h2>7. Enforcement</h2>
+  <p>The operator may remove content, revoke access, delete images, and impose bans
+    (by account, email, IP address, or network- for account access and/or for
+    viewing) at any time, with or without notice, and may report unlawful activity
+    to the appropriate authorities.</p>
+
+  <h2>8. Availability, retention, and changes</h2>
+  <ul>
+    <li>Images are stored temporarily and are deleted automatically according to
+      their retention settings<% if (imageTtlHours) { %> (default retention on this
+      instance: <%= imageTtlHours %> hour<%= imageTtlHours === 1 ? '' : 's' %>)<% } %>.
+      There is no guarantee of retention, availability, backup, or recovery.</li>
+    <li>The service is provided on an "as available" basis and may change, be
+      suspended, or be discontinued at any time.</li>
+    <li>These Terms may be updated; the "last updated" date will change and
+      continued use after an update constitutes acceptance.</li>
+  </ul>
+
+  <h2>9. Licence</h2>
+  <p>NamelessUnSee is licensed under the
+    <a href="/license">Nameless Nanashi Code License (NNCL) v1.4</a>
+    (<a href="/license.md">full text</a>), which permits non-commercial use, study,
+    sharing, and adaptation under firm ethical conditions. Your use of the software
+    must comply with that licence, including its ethical-use and non-commercial
+    terms.</p>
+
+  <h2>10. Disclaimer of warranties</h2>
+  <p>THE SERVICE AND SOFTWARE ARE PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT
+    WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES OF TITLE,
+    NON-INFRINGEMENT, MERCHANTABILITY, AND FITNESS FOR A PARTICULAR PURPOSE. The
+    operator does not warrant that the service will be uninterrupted, secure, or
+    error-free, that watermarking or access controls cannot be defeated, or that
+    images cannot be captured by other means (for example, screenshots or
+    photographs of a screen), which no online service can prevent.</p>
+
+  <h2>11. Limitation of liability</h2>
+  <p>TO THE MAXIMUM EXTENT PERMITTED BY LAW, NEITHER THE OPERATOR NOR THE PROJECT'S
+    AUTHORS WILL BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR
+    EXEMPLARY DAMAGES, OR FOR ANY LOSS OF DATA, ARISING FROM OR RELATED TO YOUR USE
+    OF THE SERVICE. Nothing in these Terms excludes liability that cannot be
+    excluded under applicable law.</p>
+
+  <h2>12. Indemnity</h2>
+  <p>You agree to indemnify and hold harmless the operator and the project's
+    authors from claims, losses, and expenses arising out of your content, your use
+    of the service, or your breach of these Terms.</p>
+
+  <h2>13. Governing law and contact</h2>
+  <p><% if (operator.jurisdiction) { %>These Terms are governed by the laws of
+    <%= operator.jurisdiction %>, without regard to conflict-of-law rules.<% } else { %>These
+    Terms are governed by the laws of the operator's jurisdiction.<% } %>
+    Questions or notices may be sent to
+    <% if (contactObfuscated) { %><strong><span data-obfuscated-email="<%= contactObfuscated %>">(the
+    contact address appears here once JavaScript loads)</span></strong><% } else { %>the
+    operator of this instance<% } %>.</p>
+
+  <p class="foot muted"><a href="/">Back</a> - <a href="/privacy">Privacy Policy</a></p>
+</div>
+<% if (contactObfuscated) { %>
+<script src="/altcha-obfuscation.min.js"></script>
+<script src="/email-reveal.js"></script>
+<% } %>
+</body>
+</html>

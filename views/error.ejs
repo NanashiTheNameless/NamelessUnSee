@@ -1,0 +1,11 @@
+<% var pageTitle = 'NamelessUnSee - ' + (typeof title !== 'undefined' ? title : 'error'); %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1><%= typeof title !== 'undefined' ? title : 'Error' %></h1>
+  <div class="card">
+    <p><%= typeof message !== 'undefined' ? message : 'Something went wrong.' %></p>
+    <p><a class="btn secondary" href="/">Home</a></p>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -1,0 +1,134 @@
+<% var pageTitle = 'NamelessUnSee - dashboard'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<%
+  function fmtDur(s){
+    if(!s) return 'never';
+    if(s % 86400 === 0) return (s/86400) + ' day' + (s/86400===1?'':'s');
+    if(s % 3600 === 0) return (s/3600) + ' hour' + (s/3600===1?'':'s');
+    return Math.round(s/60) + ' min';
+  }
+  function fmtDate(ms){ return new Date(ms).toISOString().replace('T',' ').replace(/\..+/,' UTC'); }
+%>
+<div class="wrap">
+  <h1>Your images and videos</h1>
+  <% if (flagged) { %><div class="error upload-result" role="status" data-auto-dismiss="6000">Your upload was flagged by automated moderation and is held pending review by an administrator.</div><% } %>
+  <% if (notice && !flagged) { %><div class="notice upload-result" role="status" data-auto-dismiss="4500"><%= notice %></div><% } %>
+
+  <style>
+    .upload-progress { display:flex; align-items:center; gap:.65rem; margin-top:.7rem; color:var(--muted); }
+    .upload-spinner { box-sizing:border-box; flex:0 0 1rem; width:1rem; height:1rem; aspect-ratio:1; border:.15rem solid var(--border); border-top-color:var(--red); border-radius:50%; animation:upload-spin .8s linear infinite; }
+    @keyframes upload-spin { to { transform:rotate(360deg); } }
+  </style>
+  <div class="card">
+    <h2 style="margin-top:0">Upload an image or video</h2>
+    <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg.</p>
+    <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="title">Label <span class="muted">(optional, for your reference)</span></label>
+      <input type="text" id="title" name="title" maxlength="200">
+
+      <label for="image">Image or video file</label>
+      <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,video/mp4,video/webm,video/quicktime,video/ogg" required>
+
+      <div class="grid two" style="margin-top:.6rem">
+        <div>
+          <label for="ttl">Keep for</label>
+          <select id="ttl" name="ttl" style="width:100%; padding:.55rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d">
+            <option value="1h" <%= defaults.default_ttl === '1h' ? 'selected' : '' %>>1 hour</option>
+            <option value="6h" <%= defaults.default_ttl === '6h' ? 'selected' : '' %>>6 hours</option>
+            <option value="24h" <%= defaults.default_ttl === '24h' ? 'selected' : '' %>>24 hours</option>
+            <option value="3d" <%= defaults.default_ttl === '3d' ? 'selected' : '' %>>3 days</option>
+            <option value="7d" <%= defaults.default_ttl === '7d' ? 'selected' : '' %>>7 days</option>
+            <option value="30d" <%= defaults.default_ttl === '30d' ? 'selected' : '' %>>30 days</option>
+            <option value="never" <%= defaults.default_ttl === 'never' ? 'selected' : '' %>>No time limit</option>
+          </select>
+        </div>
+        <div>
+          <label for="max_views">Delete after N views <span class="muted">(optional)</span></label>
+        <input type="number" id="max_views" name="max_views" min="1" value="<%= defaults.default_max_views || '' %>" placeholder="unlimited">
+        </div>
+      </div>
+
+      <label style="margin-top:.6rem">When does the timer start?</label>
+      <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="timer_start" value="first_view" <%= defaults.default_timer_start === 'first_view' ? 'checked' : '' %> style="width:auto"> When the image is first viewed</label>
+      <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="timer_start" value="upload" <%= defaults.default_timer_start === 'upload' ? 'checked' : '' %> style="width:auto"> Immediately on upload</label>
+
+      <p style="margin-top:1.1rem"><button id="upload-submit" class="btn" type="submit">Upload</button></p>
+      <div id="upload-progress" class="upload-progress" role="status" aria-live="polite" hidden>
+        <span class="upload-spinner" aria-hidden="true"></span>
+        <span>Uploading and checking your file. Please wait… Videos are sampled for moderation.</span>
+      </div>
+    </form>
+  </div>
+
+  <% if (!images.length) { %>
+    <p class="muted">You haven't uploaded anything yet.</p>
+  <% } %>
+
+  <% images.forEach(function(img){ %>
+    <div class="card">
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline">
+        <strong><%= img.title || '(untitled)' %></strong>
+        <% if (img.moderation_status && img.moderation_status !== 'ok' && img.moderation_status !== 'approved') { %>
+          <span class="pill rejected"><%= img.moderation_status === 'review' || img.moderation_status === 'quarantined' ? 'under review' : img.moderation_status %></span>
+        <% } %>
+        <span class="muted mono"><%= img.width %>×<%= img.height %> - <%= Math.round(img.byte_size/1024) %> KB</span>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted"><%= img.view_count %><% if (img.max_views) { %> / <%= img.max_views %><% } %> view<%= img.view_count === 1 ? '' : 's' %></span>
+      </div>
+      <p class="mono" style="margin:.6rem 0">
+        Share link:
+        <a href="<%= baseUrl %>/i/<%= img.token %>"><%= baseUrl %>/i/<%= img.token %></a>
+      </p>
+      <p class="muted" style="margin:.3rem 0">
+        <% if (img.expires_at) { %>
+          Deletes: <%= fmtDate(img.expires_at) %><% if (img.max_views) { %> (or after <%= img.max_views %> views)<% } %>
+        <% } else if (img.ttl_seconds && img.timer_start === 'first_view') { %>
+          Deletes <%= fmtDur(img.ttl_seconds) %> after first view<% if (img.max_views) { %>, or after <%= img.max_views %> views<% } %>
+        <% } else if (img.max_views) { %>
+          Deletes after <%= img.max_views %> views (no time limit)
+        <% } else { %>
+          No automatic deletion
+        <% } %>
+      </p>
+      <div style="display:flex; gap:.6rem; margin-top:.6rem">
+        <a class="btn secondary small" href="/dashboard/i/<%= img.token %>/logs">View access log</a>
+        <a class="btn secondary small" href="/dashboard/i/<%= img.token %>/links">Recipient links</a>
+        <form method="post" action="/dashboard/i/<%= img.token %>/delete">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn danger small" type="submit">Delete now</button>
+        </form>
+      </div>
+    </div>
+  <% }); %>
+</div>
+<script>
+  (() => {
+    const form = document.getElementById('upload-form');
+    const file = document.getElementById('image');
+    const button = document.getElementById('upload-submit');
+    const progress = document.getElementById('upload-progress');
+    const resetUploadState = () => {
+      button.disabled = false;
+      button.textContent = 'Upload';
+      progress.hidden = true;
+    };
+    if (!form || !file || !button || !progress) return;
+    form.addEventListener('submit', () => {
+      if (!file.files.length) return;
+      button.disabled = true;
+      button.textContent = 'Checking…';
+      progress.hidden = false;
+    });
+    window.addEventListener('pageshow', resetUploadState);
+
+    document.querySelectorAll('[data-auto-dismiss]').forEach((message) => {
+      const delay = Number(message.dataset.autoDismiss) || 4500;
+      window.setTimeout(() => {
+        message.hidden = true;
+      }, delay);
+    });
+  })();
+</script>
+<%- include('partials/foot') %>

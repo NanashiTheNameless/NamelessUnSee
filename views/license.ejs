@@ -1,0 +1,62 @@
+<% var pageTitle = 'NamelessUnSee - code licence'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Code licence</h1>
+  <p class="muted">NamelessUnSee is licensed under the
+    <strong>Nameless Nanashi Code License (NNCL) v1.4</strong>.
+    Read the full text: <a href="/license.md">/license.md</a> -
+    <a href="https://github.com/NanashiTheNameless/NamelessUnSee/blob/main/LICENSE.md">canonical NNCL</a> -
+    source code: <a href="<%= sourceUrl %>"><%= sourceUrl %></a>.</p>
+
+  <div class="warn">
+    This page is a plain-language summary for convenience only. It is
+    <strong>not</strong> the licence and is not legal advice. The full
+    <a href="/license.md">NNCL v1.4 text</a> is what actually governs your rights
+    and obligations; if anything here conflicts with it, the full text controls.
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">In short</h2>
+    <ul>
+      <li><strong>You may</strong> use, run, study, modify, and share the Work and
+        your adaptations- <strong>for non-commercial purposes only</strong>.</li>
+      <li><strong>Non-commercial only.</strong> Selling it, charging for access
+        (including SaaS/API fees), ad-supported or monetised hosting, paid
+        support/training centred on it, bundling into paid products, or internal
+        use primarily supporting revenue generation all require a separate
+        commercial licence from the Licensor. Non-rewarded donations are fine.</li>
+      <li><strong>Share-alike + notices.</strong> If you share it or an adaptation,
+        you must keep attribution and the project name, include this exact licence
+        (including its Policy), state what you changed and when, and make the
+        complete corresponding source available if you distribute a built version.</li>
+      <li><strong>Ethical-use Policy (Section 4).</strong> It must not be used to
+        promote or enable bigotry, discrimination, or human-rights violations, and
+        it must not be used by law-enforcement, carceral, immigration-enforcement,
+        military, or military-contractor entities (or people acting on their
+        behalf). Any terms you add must be equal or stricter, never looser.</li>
+      <li><strong>No AI training for commercial use.</strong> The Work may not be
+        used to train or fine-tune ML/AI models for commercial deployment, nor
+        included in datasets for monetised ML/AI activity.</li>
+      <li><strong>As-is.</strong> No warranty; liability is limited to the extent
+        permitted by law.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Deploying a modified version?</h2>
+    <p style="margin-bottom:0">Keep the attribution and project name, note your
+      changes and their date, make the corresponding source available under this
+      same licence, and reproduce the full NNCL text (including the Section 4
+      Policy). If you run a modified version for more than 100 users or across an
+      organisation, the licence also asks you to publish how to obtain the exact
+      deployed source, your compliance with the Policy, and a compliance contact.</p>
+  </div>
+
+  <p style="display:flex; gap:.6rem; flex-wrap:wrap">
+    <a class="btn" href="/license.md">Read the full NNCL v1.4</a>
+    <a class="btn secondary" href="/acknowledgements">Open-source acknowledgements</a>
+    <a class="btn secondary" href="<%= sourceUrl %>">Source code</a>
+  </p>
+</div>
+<%- include('partials/foot') %>

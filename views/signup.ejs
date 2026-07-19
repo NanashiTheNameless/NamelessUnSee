@@ -1,0 +1,26 @@
+<% var pageTitle = 'NamelessUnSee - sign up'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Create an account</h1>
+  <p class="muted">New accounts must be approved by an administrator before you can upload.</p>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:460px">
+    <form method="post" action="/signup">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" autocomplete="email" value="<%= values.email || '' %>" required>
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autocomplete="username" value="<%= values.username || '' %>" required>
+      <label for="password">Password <span class="muted">(min 10 characters)</span></label>
+      <input type="password" id="password" name="password" autocomplete="new-password" minlength="10" required>
+
+      <div style="margin-top:1rem">
+        <%- include('partials/altcha-widget') %>
+      </div>
+
+      <p style="margin-top:1.1rem"><button class="btn" type="submit">Sign up</button></p>
+    </form>
+    <p class="muted">Already have an account? <a href="/login">Log in</a>.</p>
+  </div>
+</div>
+<%- include('partials/foot') %>

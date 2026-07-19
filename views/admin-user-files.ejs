@@ -1,0 +1,37 @@
+<% var pageTitle = 'NamelessUnSee - user files'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/admin">← Admin</a></p>
+  <h1>Files for <span class="mono"><%= target.username %></span></h1>
+  <% if (images.length) { %>
+    <form method="post" action="/admin/users/<%= encodeURIComponent(target.id) %>/files/delete-all" onsubmit="return confirm('Delete all active files for this user?');" style="margin:1rem auto; width:fit-content">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <button class="btn danger small" type="submit">Delete All Files</button>
+    </form>
+  <% } %>
+  <% if (!images.length) { %>
+    <p class="muted">This user has no active files.</p>
+  <% } else { %>
+    <div class="card"><div class="scroll"><table>
+      <thead><tr><th>Title</th><th>Size</th><th>Created</th><th></th></tr></thead>
+      <tbody>
+      <% images.forEach(function(image){ %>
+        <tr>
+          <td><%= image.title || '(untitled)' %><br><span class="muted mono"><%= image.token %></span></td>
+          <td class="mono"><%= Math.round(image.byte_size / 1024) %> KB</td>
+          <td class="muted"><%= new Date(image.created_at).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %></td>
+          <td>
+            <a class="btn secondary small" href="/admin/users/<%= target.id %>/files/<%= encodeURIComponent(image.token) %>" target="_blank" rel="noreferrer">Retrieve Original</a>
+            <form method="post" action="/admin/users/<%= encodeURIComponent(target.id) %>/files/<%= encodeURIComponent(image.token) %>/delete" onsubmit="return confirm('Delete this file?');" style="display:inline">
+              <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <button class="btn danger small" type="submit">Delete</button>
+            </form>
+          </td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table></div></div>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

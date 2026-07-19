@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:,">
+<title><%= pageTitle %></title>
+<style>
+  @font-face {
+    font-family: '0xProto';
+    src: url('/fonts/0xProto-Regular.woff2') format('woff2');
+    font-weight: 400; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: '0xProto';
+    src: url('/fonts/0xProto-Bold.woff2') format('woff2');
+    font-weight: 700; font-style: normal; font-display: swap;
+  }
+  @font-face {
+    font-family: '0xProto';
+    src: url('/fonts/0xProto-Italic.woff2') format('woff2');
+    font-weight: 400; font-style: italic; font-display: swap;
+  }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.2rem 4rem;
+    font-family: '0xProto', ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #16161c; color: #fff; line-height: 1.6;
+  }
+  .box { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 1rem; }
+  h2 { font-size: 1.1rem; margin: 1.6rem 0 .5rem; }
+  a { color: #ff6b7a; }
+  p, li { font-size: .95rem; }
+  .warn {
+    background: #3b0b14; border: 1px solid #d10a2c; color: #fff;
+    padding: 1rem 1.1rem; border-radius: 9px; margin: 1.2rem 0;
+    font-size: .95rem; font-weight: 400; line-height: 1.6;
+  }
+  .warn strong { color: #fff; font-weight: 700; }
+  .card { background: #202027; border: 1px solid #543039; border-radius: 10px; padding: 1.2rem 1.3rem; margin: 1.2rem 0; }
+  .muted { color: rgba(255,255,255,.72); font-size: .88rem; }
+  label.check { display: flex; gap: .6rem; align-items: flex-start; margin: 1rem 0; font-size: .95rem; }
+  input[type=checkbox] { margin-top: .25rem; width: 1.1rem; height: 1.1rem; }
+  .btn {
+    display: inline-block; padding: .6rem 1.2rem; border-radius: 8px; border: 1px solid #f02f4f;
+    background: #d10a2c; color: #fff; font-weight: 700; cursor: pointer; font-size: 1rem;
+    font-family: inherit;
+  }
+  .btn:hover { background: #f02f4f; }
+  .err { background: #4b1724; border: 1px solid #9d3048; color: #fff; padding: .7rem .9rem; border-radius: 7px; margin: 1rem 0; }
+  ul { padding-left: 1.2rem; }
+  .foot { margin-top: 2rem; border-top: 1px solid #30363d; padding-top: 1rem; }
+</style>
+</head>
+<body>
+<div class="box">

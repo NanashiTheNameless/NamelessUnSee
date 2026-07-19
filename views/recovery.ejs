@@ -1,0 +1,20 @@
+<% var pageTitle = 'NamelessUnSee - verify recovery'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Verify recovery</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:420px">
+    <p>We sent a verification code to <span class="mono"><%= email %></span>. The code expires in 5 minutes.</p>
+    <form method="post" action="/forgot-password/verify">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="code">Verification code</label>
+      <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
+      <label for="password">New password</label>
+      <input type="password" id="password" name="password" minlength="10" autocomplete="new-password" required>
+      <p><button class="btn" type="submit">Reset password</button></p>
+    </form>
+    <p class="muted"><a href="/login">Back to login</a></p>
+  </div>
+</div>
+<%- include('partials/foot') %>

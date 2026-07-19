@@ -1,0 +1,265 @@
+<% var pageTitle = 'NamelessUnSee - admin'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Admin - <%= section === 'users' ? 'Users' : section === 'reports' ? 'Reports' : section === 'bans' ? 'Bans' : 'Audit log' %></h1>
+
+  <% if (section === 'users') { %>
+  <div class="card">
+    <h2 style="margin-top:0">Pending approvals <span class="muted">(<%= pending.length %>)</span></h2>
+    <% if (!pending.length) { %>
+      <p class="muted">No accounts awaiting approval.</p>
+    <% } else { %>
+      <div class="scroll"><table>
+        <thead><tr><th>Username</th><th>Email</th><th>Requested</th><th>Actions</th></tr></thead>
+        <tbody>
+        <% pending.forEach(function(u){ %>
+          <tr>
+            <td class="mono"><%= u.username %></td>
+            <td class="mono"><%= u.email %></td>
+            <td class="muted"><%= new Date(u.created_at).toISOString().slice(0,16).replace('T',' ') %></td>
+            <td>
+              <div style="display:flex; gap:.4rem">
+                <form method="post" action="/admin/users/<%= u.id %>/approve">
+                  <input type="hidden" name="_csrf" value="<%= csrf %>">
+                  <button class="btn small" type="submit">Approve</button>
+                </form>
+                <form method="post" action="/admin/users/<%= u.id %>/reject">
+                  <input type="hidden" name="_csrf" value="<%= csrf %>">
+                  <button class="btn danger small" type="submit">Deny</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+  <% } %>
+
+  <% if (section === 'reports') { %>
+  <div class="card" id="leak-reports">
+    <h2 style="margin-top:0">Leak reports <span class="muted">(<%= reports.filter(function(r){ return r.status === 'open'; }).length %> open / <%= reports.length %> total)</span></h2>
+    <% if (!reports.length) { %>
+      <p class="muted">No leak reports submitted.</p>
+    <% } else { %>
+      <% reports.forEach(function(r){ %>
+        <div style="border:1px solid #30363d; border-radius:8px; padding:.8rem; margin:.7rem 0">
+          <div style="display:flex; gap:.6rem; flex-wrap:wrap; align-items:baseline">
+            <strong>Report #<%= r.id %></strong>
+            <span class="pill <%= r.status === 'open' ? 'pending' : (r.status === 'dismissed' ? 'rejected' : 'approved') %>"><%= r.status %></span>
+            <span class="muted"><%= new Date(r.created_at).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %></span>
+          </div>
+          <p class="muted" style="margin:.45rem 0">Reporter <span class="mono"><%= r.reporter_name %></span> - owner <span class="mono"><%= r.owner_name %></span> - reason <strong><%= r.reason %></strong></p>
+          <p style="margin:.45rem 0">Image <a class="mono" href="/i/<%= encodeURIComponent(r.token) %>"><%= r.token %></a><% if (r.view_ref) { %> - watermark ref <span class="mono"><%= r.view_ref %></span><% } %></p>
+          <% if (r.details) { %><p style="white-space:pre-wrap; margin:.45rem 0"><%= r.details %></p><% } %>
+          <p class="muted" style="margin:.45rem 0">Screenshot Proofs: <%= r.proofs.length %></p>
+          <div style="display:flex; gap:.6rem; flex-wrap:wrap">
+            <% r.proofs.forEach(function(proof, index){
+              var proofUrl = proof.id ? '/admin/reports/' + r.id + '/proof/' + proof.id : '/admin/reports/' + r.id + '/proof';
+            %>
+              <a href="<%= proofUrl %>" target="_blank" rel="noreferrer"><img src="<%= proofUrl %>" alt="Submitted screenshot proof <%= index + 1 %>" style="display:block; max-width:320px; max-height:240px; border:1px solid #30363d; border-radius:6px"></a>
+            <% }); %>
+          </div>
+          <form method="post" action="/admin/reports/<%= r.id %>/status" style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:center">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <select name="status" style="padding:.3rem; border-radius:6px; background:#0d1117; color:#e6edf3; border:1px solid #30363d">
+              <option value="open" <%= r.status === 'open' ? 'selected' : '' %>>Open</option>
+              <option value="reviewed" <%= r.status === 'reviewed' ? 'selected' : '' %>>Reviewed</option>
+              <option value="dismissed" <%= r.status === 'dismissed' ? 'selected' : '' %>>Dismissed</option>
+            </select>
+            <input type="text" name="admin_note" maxlength="1000" placeholder="Admin note" value="<%= r.admin_note || '' %>" style="flex:1; min-width:180px">
+            <button class="btn secondary small" type="submit">Update</button>
+          </form>
+        </div>
+      <% }); %>
+    <% } %>
+  </div>
+  <% } %>
+
+  <% if (section === 'users') { %>
+  <div class="card">
+    <h2 style="margin-top:0">All accounts <span class="muted">(<%= users.length %>)</span></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Username</th><th>Email</th><th>UUID</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody>
+      <% users.forEach(function(u){ %>
+        <tr>
+          <td class="mono"><%= u.username %><%= u.id === me.id ? ' (you)' : '' %><br><a href="/admin/users/<%= u.id %>/files">Files</a></td>
+          <td class="mono"><%= u.email %></td>
+          <td class="mono"><%= u.id %></td>
+          <td><span class="pill <%= u.role === 'admin' ? 'admin' : '' %>"><%= u.role %></span><br><span class="pill"><%= u.rank %></span></td>
+          <td>
+            <span class="pill <%= u.status %>"><%= u.status %></span>
+            <% if (u.ban.account || u.ban.view) { %><span class="pill rejected">banned</span><% } %>
+          </td>
+          <td>
+            <% if (u.rank !== 'owner') { %>
+              <form method="post" action="/admin/users/<%= u.id %>/rank" style="display:flex; gap:.25rem; align-items:center; margin-bottom:.35rem">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <select name="rank" aria-label="User rank">
+                  <option value="user" <%= u.rank === 'user' ? 'selected' : '' %>>User</option>
+                  <option value="trusted" <%= u.rank === 'trusted' ? 'selected' : '' %>>Trusted User</option>
+                </select>
+                <button class="btn secondary small" type="submit">Set Rank</button>
+              </form>
+            <% } else { %><span class="muted">Owner rank is CLI-only</span><% } %>
+            <form method="post" action="/admin/users/<%= u.id %>/limits" style="display:grid; grid-template-columns:7rem 7rem auto; gap:.25rem; align-items:center; margin-bottom:.35rem">
+              <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <input type="number" name="upload_max_mb" min="1" max="<%= Math.floor(config.maxUploadBytesHard / 1048576) %>" placeholder="Upload MB" value="<%= u.upload_max_bytes ? Math.round(u.upload_max_bytes / 1048576) : '' %>">
+              <input type="number" name="storage_limit_mb" min="1" max="1048576" placeholder="Storage MB" value="<%= u.storage_limit_bytes ? Math.round(u.storage_limit_bytes / 1048576) : '' %>">
+              <button class="btn secondary small" type="submit">Set Limits</button>
+            </form>
+            <% if (u.id !== me.id && me.rank === 'owner') { %>
+              <div style="display:flex; gap:.4rem; flex-wrap:wrap">
+                <% if (u.status === 'approved' && u.role !== 'admin') { %>
+                  <form method="post" action="/admin/users/<%= u.id %>/promote">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <button class="btn secondary small" type="submit">Make admin</button>
+                  </form>
+                <% } else if (u.role === 'admin') { %>
+                  <form method="post" action="/admin/users/<%= u.id %>/demote">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <button class="btn secondary small" type="submit">Remove admin</button>
+                  </form>
+                <% } %>
+                <% if (u.ban.account || u.ban.view) { %>
+                  <form method="post" action="/admin/users/<%= u.id %>/unban">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <button class="btn secondary small" type="submit">Unban</button>
+                  </form>
+                <% } else { %>
+                  <form method="post" action="/admin/users/<%= u.id %>/ban" style="display:flex; gap:.3rem; align-items:center; flex-wrap:wrap">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <label class="muted" style="margin:0; font-weight:400"><input type="checkbox" name="ban_email" value="1" style="width:auto;height:auto"> email</label>
+                    <% if (u.last_ip) { %><label class="muted" style="margin:0; font-weight:400"><input type="checkbox" name="ban_ip" value="1" style="width:auto;height:auto"> IP (<%= u.last_ip %>)</label><% } %>
+                    <select name="expires" title="Ban duration" style="padding:.2rem; border-radius:6px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; font-size:.8rem">
+                      <option value="never">forever</option>
+                      <option value="1h">1h</option>
+                      <option value="24h">24h</option>
+                      <option value="7d">7d</option>
+                      <option value="30d">30d</option>
+                    </select>
+                    <button class="btn danger small" type="submit">Ban</button>
+                  </form>
+                <% } %>
+              </div>
+            <% } else { %><span class="muted">-</span><% } %>
+          </td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table></div>
+  </div>
+  <% } %>
+
+  <% if (section === 'bans') { %>
+  <div class="card">
+    <h2 style="margin-top:0">Bans <span class="muted">(<%= bans.length %>)</span></h2>
+    <p class="muted">Ban by IP or CIDR (blocks viewing and/or account access), by email (account), or by user id.<br>"View" bans block access to the whole service from that source; "Account" bans block signup/login.</p>
+
+    <form method="post" action="/admin/bans" style="display:grid; gap:.5rem; grid-template-columns:1fr; max-width:560px">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label>Type</label>
+      <select name="kind" style="padding:.5rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d">
+        <option value="ip">IP / CIDR</option>
+        <option value="email">Email</option>
+        <option value="user">User id</option>
+      </select>
+      <label>Value <span class="muted">(e.g. 203.0.113.4, 203.0.113.0/24, user@example.com, or a user id)</span></label>
+      <input type="text" name="value" required>
+      <div style="display:flex; gap:1.2rem; margin:.3rem 0">
+        <label class="muted" style="margin:0; font-weight:400"><input type="checkbox" name="block_view" value="1" checked style="width:auto;height:auto"> Block viewing</label>
+        <label class="muted" style="margin:0; font-weight:400"><input type="checkbox" name="block_account" value="1" style="width:auto;height:auto"> Block account</label>
+      </div>
+      <label>Expires</label>
+      <select name="expires" style="padding:.5rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d">
+        <option value="never">Never (permanent)</option>
+        <option value="1h">1 hour</option>
+        <option value="24h">24 hours</option>
+        <option value="7d">7 days</option>
+        <option value="30d">30 days</option>
+      </select>
+      <label>Reason <span class="muted">(optional)</span></label>
+      <input type="text" name="reason" maxlength="300">
+      <div><button class="btn danger small" type="submit">Add ban</button></div>
+    </form>
+
+    <% if (bans.length) { %>
+      <div class="scroll" style="margin-top:1rem"><table>
+        <thead><tr><th>Type</th><th>Value</th><th>Scope</th><th>Reason</th><th>Added</th><th>Expires</th><th></th></tr></thead>
+        <tbody>
+        <% bans.forEach(function(b){ %>
+          <tr>
+            <td><%= b.kind %></td>
+            <td class="mono"><%= b.value %></td>
+            <td>
+              <% if (b.block_view) { %><span class="pill rejected">view</span><% } %>
+              <% if (b.block_account) { %><span class="pill pending">account</span><% } %>
+            </td>
+            <td class="muted"><%= b.reason || '' %></td>
+            <td class="muted"><%= new Date(b.created_at).toISOString().slice(0,16).replace('T',' ') %></td>
+            <td class="muted"><% if (b.expires_at) { %><%= new Date(b.expires_at).toISOString().slice(0,16).replace('T',' ') %><% } else { %>-<% } %></td>
+            <td>
+              <form method="post" action="/admin/bans/<%= b.id %>/delete">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <button class="btn secondary small" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+
+  <% } %>
+
+  <% if (section === 'audit') { %>
+  <div class="card">
+    <div style="display:flex; gap:.8rem; align-items:center; flex-wrap:wrap">
+      <h2 style="margin:0; flex:1">Audit log</h2>
+      <% if (me.rank === 'owner') { %>
+        <form method="post" action="/admin/audit/clear" onsubmit="return confirm('Delete all audit-log entries permanently?')">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn danger small" type="submit">Delete all logs</button>
+        </form>
+      <% } %>
+    </div>
+    <% if (!audit.length) { %>
+      <p class="muted">No admin actions recorded yet.</p>
+    <% } else { %>
+      <div class="scroll"><table>
+        <thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Detail</th><% if (me.rank === 'owner') { %><th></th><% } %></tr></thead>
+        <tbody>
+        <% audit.forEach(function(a){ %>
+          <tr>
+            <td class="muted"><%= new Date(a.created_at).toISOString().replace('T',' ').replace(/\..+/,' UTC') %></td>
+            <td class="mono"><%= a.actor_name || ('#' + (a.actor_id || '?')) %></td>
+            <td><span class="pill"><%= a.action %></span></td>
+            <td class="muted mono" style="font-size:.82rem"><%= a.detail || '' %></td>
+            <% if (me.rank === 'owner') { %>
+              <td>
+                <form method="post" action="/admin/audit/<%= a.id %>/delete" onsubmit="return confirm('Delete this audit-log entry permanently?')">
+                  <input type="hidden" name="_csrf" value="<%= csrf %>">
+                  <button class="btn danger small" type="submit">Delete</button>
+                </form>
+              </td>
+            <% } %>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+      <% if (auditTotalPages > 1) { %>
+        <div style="display:flex; gap:.6rem; align-items:center; margin-top:.8rem">
+          <% if (apage > 1) { %><a class="btn secondary small" href="/admin/audit?apage=<%= apage-1 %>">← Newer</a><% } %>
+          <span class="muted">Page <%= apage %> / <%= auditTotalPages %></span>
+          <% if (apage < auditTotalPages) { %><a class="btn secondary small" href="/admin/audit?apage=<%= apage+1 %>">Older →</a><% } %>
+        </div>
+      <% } %>
+    <% } %>
+  </div>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

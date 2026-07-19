@@ -1,0 +1,124 @@
+<% var pageTitle = 'NamelessUnSee - account settings'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Account Settings</h1>
+  <p class="muted mono"><%= me.username %> - <%= me.email %></p>
+  <nav style="display:flex; justify-content:center; gap:.5rem; margin:1rem 0; flex-wrap:wrap">
+    <a class="btn <%= tab === 'defaults' ? '' : 'secondary' %> small" href="/account?tab=defaults">Image Defaults</a>
+    <a class="btn <%= tab === 'security' ? '' : 'secondary' %> small" href="/account?tab=security">Security</a>
+  </nav>
+
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <% if (notice) { %><div class="notice"><%= notice %></div><% } %>
+
+  <% if (tab === 'defaults') { %>
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Defaults For New Images</h2>
+      <p class="muted">These values fill the upload form and apply server-side when an upload omits them.</p>
+      <form method="post" action="/account/defaults" style="display:grid; gap:.5rem; max-width:520px">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <label for="default-ttl">Keep For</label>
+        <select id="default-ttl" name="default_ttl" style="padding:.6rem .7rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; font-size:1rem">
+          <% [['1h','1 hour'],['6h','6 hours'],['24h','24 hours'],['3d','3 days'],['7d','7 days'],['30d','30 days'],['never','No time limit']].forEach(function(option){ %>
+            <option value="<%= option[0] %>" <%= me.default_ttl === option[0] ? 'selected' : '' %>><%= option[1] %></option>
+          <% }); %>
+        </select>
+        <label for="default-max-views">Delete After N Views <span class="muted">(optional)</span></label>
+        <input type="number" id="default-max-views" name="default_max_views" min="1" value="<%= me.default_max_views || '' %>" placeholder="unlimited">
+        <label>When Does The Timer Start?</label>
+        <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="default_timer_start" value="first_view" <%= me.default_timer_start === 'first_view' ? 'checked' : '' %> style="width:auto"> First view</label>
+        <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="default_timer_start" value="upload" <%= me.default_timer_start === 'upload' ? 'checked' : '' %> style="width:auto"> Upload</label>
+        <div><button class="btn small" type="submit">Save Defaults</button></div>
+      </form>
+    </div>
+  <% } else { %>
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Email Verification</h2>
+      <p>Email verification is required by default for every login. It uses the account email and Resend.</p>
+    </div>
+
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Change Email Address</h2>
+      <p>A code will be sent to your current email address before the change is applied.</p>
+      <% if (recovery && recovery.kind === 'email') { %>
+        <form method="post" action="/account/security/email/confirm" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <input type="hidden" name="_recovery_csrf" value="<%= recovery.csrf_token %>">
+          <p class="muted">Code sent to <span class="mono"><%= me.email %></span>.</p>
+          <label for="email-code">Verification code</label>
+          <input type="text" id="email-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
+          <p><button class="btn small" type="submit">Confirm Email Change</button></p>
+        </form>
+      <% } else { %>
+        <form method="post" action="/account/security/email/start" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label for="new-email">New email address</label>
+          <input type="email" id="new-email" name="email" autocomplete="email" required>
+          <p><button class="btn secondary small" type="submit">Send Email Change Code</button></p>
+        </form>
+      <% } %>
+    </div>
+
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Reset Password</h2>
+      <p>A code will be sent to your current email address before the new password is accepted.</p>
+      <% if (recovery && recovery.kind === 'account_password') { %>
+        <form method="post" action="/account/security/password/confirm" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <input type="hidden" name="_recovery_csrf" value="<%= recovery.csrf_token %>">
+          <p class="muted">Code sent to <span class="mono"><%= me.email %></span>.</p>
+          <label for="password-code">Verification code</label>
+          <input type="text" id="password-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
+          <label for="new-password">New password</label>
+          <input type="password" id="new-password" name="new_password" minlength="10" autocomplete="new-password" required>
+          <p><button class="btn danger small" type="submit">Reset Password</button></p>
+        </form>
+      <% } else { %>
+        <form method="post" action="/account/security/password/start">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn secondary small" type="submit">Send Password Reset Code</button>
+        </form>
+      <% } %>
+    </div>
+
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Authenticator App</h2>
+      <% if (totpEnabled) { %>
+        <p class="notice">TOTP is enabled as an alternative login method.</p>
+        <form method="post" action="/account/security/totp/method" style="max-width:420px; margin-bottom:1rem">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label for="twofa-mode">Preferred Login Method</label>
+          <select id="twofa-mode" name="twofa_mode" style="width:100%; padding:.6rem .7rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; font-size:1rem">
+            <option value="email" <%= me.twofa_mode === 'email' ? 'selected' : '' %>>Email Code</option>
+            <option value="totp" <%= me.twofa_mode === 'totp' ? 'selected' : '' %>>Authenticator App</option>
+          </select>
+          <p><button class="btn secondary small" type="submit">Save Login Method</button></p>
+        </form>
+        <form method="post" action="/account/security/totp/disable" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label for="disable-password">Current Password</label>
+          <input type="password" id="disable-password" name="password" autocomplete="current-password" required>
+          <p><button class="btn danger small" type="submit">Disable TOTP</button></p>
+        </form>
+      <% } else if (setupSecret) { %>
+        <p>Add this secret to an authenticator app, then enter the six-digit code:</p>
+        <p class="mono" style="word-break:break-all; background:#0d1117; padding:.7rem; border-radius:6px"><%= setupSecret %></p>
+        <p class="muted mono" style="word-break:break-all">Manual Setup URI: <%= setupUri %></p>
+        <form method="post" action="/account/security/totp/confirm" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label for="totp-code">Authenticator Code</label>
+          <input type="text" id="totp-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+          <p><button class="btn small" type="submit">Confirm And Enable TOTP</button></p>
+        </form>
+      <% } else { %>
+        <p>TOTP is optional. Enroll an authenticator app to use six-digit codes instead of email at login.</p>
+        <form method="post" action="/account/security/totp/start">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn secondary small" type="submit">Set Up TOTP</button>
+        </form>
+      <% } %>
+    </div>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

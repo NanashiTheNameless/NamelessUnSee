@@ -1,0 +1,65 @@
+<% var pageTitle = 'NamelessUnSee - you must agree to continue'; %>
+<%- include('partials/legal-head', { pageTitle: pageTitle }) %>
+
+  <h1>You must agree to the Terms and Privacy Policy to continue</h1>
+
+  <div class="warn">
+    <strong>Read this before you continue.</strong> This service exists to trace
+    leaks. If you continue, the content you are about to view will be
+    <strong>watermarked with your IP address, your approximate geographic
+    location, and your device information</strong>, and <strong>everything that
+    can be collected about your visit will be logged</strong> and made available
+    to the person who shared it.
+  </div>
+
+  <div class="card">
+    <h2>What happens when you continue</h2>
+    <ul>
+      <li>Your public IP address, IP-based geolocation, network/ISP, and device
+        (browser, operating system, device type) are recorded and stamped onto
+        what you view as a visible watermark unique to you.</li>
+      <li>Additional information your browser exposes- screen and window size,
+        timezone, language, platform, and request headers- is logged.</li>
+      <li><strong>VPNs, proxies, Tor and other anonymising networks are blocked.</strong>
+        If your connection cannot be fully identified, nothing will be shown.</li>
+    </ul>
+    <p class="muted">This warning, the <a href="/tos" target="_blank" rel="noopener noreferrer">Terms</a> and the
+      <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a> do not log you. They load nothing but
+      their own text, the site font, the bot check below, and a small self-hosted
+      script that reveals the contact address- nothing from third parties.
+      Logging only begins once you continue past this page.</p>
+  </div>
+
+  <% if (error === 'agree') { %>
+    <div class="err">You must tick the box to agree before continuing.</div>
+  <% } else if (error === 'altcha') { %>
+    <div class="err">The bot-protection check did not pass. Please try again.</div>
+  <% } %>
+
+  <form method="post" action="/welcome">
+    <input type="hidden" name="next" value="<%= next %>">
+
+    <label class="check">
+      <input type="checkbox" name="agree" value="on">
+      <span>I have read and agree to the <a href="/tos" target="_blank" rel="noopener noreferrer">Terms of Service</a> and
+        <a href="/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and I understand that my IP,
+        location, device and other information will be logged and watermarked
+        into anything I view.</span>
+    </label>
+
+    <div style="margin-top:1rem">
+      <%- include('partials/altcha-widget') %>
+    </div>
+
+    <p style="margin-top:1.2rem">
+      <button class="btn" type="submit">Continue</button>
+    </p>
+  </form>
+
+  <p class="foot muted">
+    NamelessUnSee -  <a href="<%= sourceUrl %>" target="_blank" rel="noopener noreferrer">source</a> -
+    licensed under <a href="/license" target="_blank" rel="noopener noreferrer">NNCL 1.4</a>
+  </p>
+</div>
+</body>
+</html>

@@ -1,0 +1,24 @@
+<% var pageTitle = 'NamelessUnSee - report leaker'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/dashboard/i/<%= encodeURIComponent(image.token) %>/logs">- Access Log</a></p>
+  <h1>Report As Leaker</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:680px">
+    <p class="muted">Image: <span class="mono"><%= image.title || '(untitled)' %></span></p>
+    <p class="muted">View: <span class="mono"><%= log.view_id || log.id %></span> - <%= new Date(log.viewed_at).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %></p>
+    <p>Submit a screenshot showing this watermarked copy. Reports are rate-limited and reviewed by administrators.</p>
+    <form method="post" action="/dashboard/i/<%= encodeURIComponent(image.token) %>/logs/<%= log.id %>/report" enctype="multipart/form-data" style="display:grid; gap:.5rem; max-width:620px">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="details">Details</label>
+      <textarea id="details" name="details" maxlength="2000" rows="4" required style="width:100%; padding:.6rem .7rem; border-radius:7px; border:1px solid #30363d; background:#0d1117; color:#e6edf3; font:inherit"></textarea>
+      <label for="proof">Screenshot Proofs</label>
+      <input type="file" id="proof" name="proofs" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple required>
+      <p class="muted">Upload at least one screenshot, up to 15 total. Include the watermark and the redistributed copy.</p>
+      <%- include('partials/altcha-widget') %>
+      <div><button class="btn danger small" type="submit">Report As Leaker</button></div>
+    </form>
+  </div>
+</div>
+<%- include('partials/foot') %>

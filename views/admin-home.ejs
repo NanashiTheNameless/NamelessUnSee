@@ -1,0 +1,32 @@
+<% var pageTitle = 'NamelessUnSee - admin'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Admin</h1>
+  <p class="muted">Quick view</p>
+  <div class="grid two admin-quick-grid">
+    <a class="card admin-quick-card" href="/admin/users">
+      <h2>Users</h2><strong><%= accountCount %></strong> total
+      <% if (pendingCount) { %><p class="muted"><%= pendingCount %> awaiting approval</p><% } %>
+    </a>
+    <a class="card admin-quick-card" href="/admin/review">
+      <h2>Moderation review</h2><strong><%= reviewCount %></strong> queued
+    </a>
+    <a class="card admin-quick-card" href="/admin/reports">
+      <h2>Leak reports</h2><strong><%= openReportCount %></strong> open
+    </a>
+    <a class="card admin-quick-card" href="/admin/bans">
+      <h2>Bans</h2><strong><%= banCount %></strong> active
+      <% if (recentBans.length) { %>
+        <p class="muted"><% recentBans.forEach(function(b){ %><span class="mono"><%= b.value %></span><br><% }); %></p>
+      <% } %>
+    </a>
+    <a class="card admin-quick-card" href="/admin/audit">
+      <h2>Audit log</h2><strong><%= auditCount %></strong> entries
+      <% if (recentAudit.length) { %>
+        <p class="muted"><% recentAudit.forEach(function(a){ %><span class="mono"><%= a.action %> <%= a.detail || '' %></span><br><% }); %></p>
+      <% } %>
+    </a>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -1,0 +1,86 @@
+<% var pageTitle = 'NamelessUnSee - access log'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/dashboard">← Dashboard</a></p>
+  <h1>Access log</h1>
+  <% if (reported) { %><div class="notice">Leaker report submitted to administrators.</div><% } %>
+  <p class="muted mono"><%= image.title || '(untitled)' %> - <%= baseUrl %>/i/<%= image.token %></p>
+
+  <form method="get" action="/dashboard/i/<%= image.token %>/logs" style="display:flex; gap:.5rem; margin:.8rem auto; max-width:520px">
+    <input type="text" name="q" value="<%= q %>" placeholder="Search IP, country, device, city, org…" style="flex:1">
+    <button class="btn secondary small" type="submit">Search</button>
+    <% if (q) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs">Clear</a><% } %>
+  </form>
+
+  <p class="muted"><%= total %> match<%= total === 1 ? '' : 'es' %><% if (q) { %> for "<%= q %>"<% } %> -
+    page <%= page %> of <%= totalPages %></p>
+
+  <% if (!logs.length) { %>
+    <p class="muted"><%= q ? 'No matching views.' : 'No views recorded yet.' %></p>
+  <% } %>
+
+  <% logs.forEach(function(r){ %>
+    <div class="card">
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline">
+        <strong class="mono"><%= r.ip || 'unknown' %></strong>
+        <% if (r.geo && r.geo.proxy && r.geo.proxy.isProxy) { %>
+          <span class="pill rejected">proxy/VPN: <%= r.geo.proxy.type || 'yes' %></span>
+        <% } %>
+        <% if (r.link_label) { %>
+          <span class="pill approved">via <%= r.link_label %></span>
+        <% } %>
+        <span class="spacer" style="flex:1"></span>
+        <span class="muted"><%= new Date(r.viewed_at).toISOString().replace('T',' ').replace(/\..+/,' UTC') %></span>
+      </div>
+
+      <table style="margin-top:.7rem">
+        <tr><th style="width:170px">Location</th><td>
+          <% if (r.geo) { %>
+            <%= [r.geo.city, r.geo.region, r.geo.country].filter(Boolean).join(', ') || (r.ip_country || 'unknown') %>
+            <% if (r.geo.org) { %><span class="muted"> - <%= r.geo.org %></span><% } %>
+          <% } else { %><%= r.ip_country || 'unknown' %><% } %>
+        </td></tr>
+        <% if (r.device) { %>
+          <tr><th>Device</th><td>
+            <%= [r.device.browser, r.device.browserVersion].filter(Boolean).join(' ') %> -
+            <%= [r.device.os, r.device.osVersion].filter(Boolean).join(' ') %> -
+            <%= r.device.deviceType %>
+          </td></tr>
+        <% } %>
+        <% if (r.client) { %>
+          <tr><th>Client</th><td class="muted mono" style="font-size:.8rem">
+            <% if (r.client.screenW) { %>screen <%= r.client.screenW %>×<%= r.client.screenH %> - <% } %>
+            <% if (r.client.viewportW) { %>viewport <%= r.client.viewportW %>×<%= r.client.viewportH %> - <% } %>
+            <% if (r.client.timezone) { %>tz <%= r.client.timezone %> - <% } %>
+            <% if (r.client.languages) { %>lang <%= Array.isArray(r.client.languages) ? r.client.languages.join(',') : r.client.languages %> - <% } %>
+            <% if (r.client.platform) { %>platform <%= r.client.platform %><% } %>
+          </td></tr>
+        <% } %>
+      </table>
+
+      <div style="margin-top:.7rem">
+        <% if (r.reported) { %>
+          <button class="btn secondary small" type="button" disabled>Already Reported</button>
+        <% } else { %>
+          <a class="btn danger small" href="/dashboard/i/<%= image.token %>/logs/<%= r.id %>/report">Report As Leaker</a>
+        <% } %>
+      </div>
+
+      <details style="margin-top:.6rem">
+        <summary class="muted">Raw data (headers, full client & geo)</summary>
+        <pre class="mono scroll" style="font-size:.75rem; white-space:pre-wrap; background:#0d1117; padding:.7rem; border-radius:6px; border:1px solid #30363d"><%= JSON.stringify({ user_agent: r.user_agent, geo: r.geo, client: r.client, headers: r.headers }, null, 2) %></pre>
+      </details>
+    </div>
+  <% }); %>
+
+  <% if (totalPages > 1) { %>
+    <div style="display:flex; gap:.6rem; align-items:center; margin-top:1rem">
+      <% var qs = q ? ('&q=' + encodeURIComponent(q)) : ''; %>
+      <% if (page > 1) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs?page=<%= page-1 %><%= qs %>">← Prev</a><% } %>
+      <span class="muted">Page <%= page %> / <%= totalPages %></span>
+      <% if (page < totalPages) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs?page=<%= page+1 %><%= qs %>">Next →</a><% } %>
+    </div>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

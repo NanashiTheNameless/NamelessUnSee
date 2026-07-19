@@ -1,0 +1,232 @@
+<% var pageTitle = title ? ('NamelessUnSee - ' + title) : 'NamelessUnSee'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <div class="notice" style="background:#1a1200; border-color:#8a6d00; color:#ffe08a">
+    You are viewing a traceable copy. Your IP, location and device are watermarked
+    into this image and your visit is being logged. See the
+    <a href="/privacy">Privacy Policy</a>.
+  </div>
+
+  <% if (title) { %><h1><%= title %></h1><% } %>
+
+  <% if (!gateReady) { %>
+    <div class="card" style="max-width:620px">
+      <h2 style="margin-top:0">One quick check</h2>
+      <p>Confirm you're not a robot and the content will load.</p>
+      <form method="post" action="/i/<%= encodeURIComponent(token) %>/view-check">
+        <% if (linkToken) { %><input type="hidden" name="r" value="<%= linkToken %>"><% } %>
+        <%- include('partials/altcha-widget') %>
+        <p><button class="btn" type="submit">View Content</button></p>
+      </form>
+    </div>
+  <% } else { %>
+  <div class="card imgcard" style="text-align:center">
+    <div id="pwrap" style="position:relative; display:inline-block; max-width:100%;
+         -webkit-user-select:none; user-select:none; -webkit-touch-callout:none">
+      <div id="protected" role="img" aria-label="protected media"
+           <% if (width && height) { %>style="width:<%= width %>px; max-width:100%; aspect-ratio:<%= width %>/<%= height %>;
+             background-repeat:no-repeat; background-size:contain; background-position:center;
+             border-radius:6px; border:1px solid #30363d"<% } else { %>style="min-height:200px"<% } %>></div>
+      <div id="povl" style="position:absolute; inset:0; cursor:default;<% if (mediaType === 'video') { %> pointer-events:none;<% } %>"></div>
+    </div>
+    <noscript><p class="muted">JavaScript is required to view this image.</p></noscript>
+  </div>
+  <% } %>
+
+  <p class="muted">What you see is a copy made just for you, carrying your details as a
+    watermark. No website can prevent a screenshot or recording- but anything captured
+    here stays traceable to you.</p>
+
+  <% if (reported) { %>
+    <div class="notice">Report submitted to administrators.</div>
+  <% } %>
+
+  <% if (user) { %>
+    <div class="card">
+      <h2 style="margin-top:0">Report this view</h2>
+      <p class="muted">If this watermarked copy was redistributed or used to harass someone,
+        send administrators the screenshot showing its watermark. The proof is private and
+        visible only to administrators.</p>
+      <form method="post" action="/i/<%= encodeURIComponent(token) %>/report" enctype="multipart/form-data" style="display:grid; gap:.5rem; max-width:620px">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <label for="report-reason">Reason</label>
+        <select id="report-reason" name="reason" required style="padding:.6rem .7rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; font-size:1rem">
+          <option value="">Choose one</option>
+          <option value="unauthorized_redistribution">Unauthorized redistribution</option>
+          <option value="harassment">Harassment or abuse</option>
+          <option value="other">Other</option>
+        </select>
+        <label for="report-details">Details</label>
+        <textarea id="report-details" name="details" maxlength="2000" rows="4" required style="width:100%; padding:.6rem .7rem; border-radius:7px; border:1px solid #30363d; background:#0d1117; color:#e6edf3; font:inherit"></textarea>
+        <label for="report-ref">Watermark ref <span class="muted">(optional, copy the ref shown in the screenshot)</span></label>
+        <input type="text" id="report-ref" name="view_ref" maxlength="120" placeholder="image-token/view-id">
+        <label for="report-proof">Screenshot Proofs</label>
+        <input type="file" id="report-proof" name="proofs" accept="image/png,image/jpeg,image/webp,image/gif,image/avif" multiple required>
+        <p class="muted">Upload at least one screenshot, up to 15 total. Include the watermark and the redistributed copy.</p>
+        <%- include('partials/altcha-widget') %>
+        <div><button class="btn danger small" type="submit">Submit report</button></div>
+      </form>
+    </div>
+  <% } %>
+</div>
+
+<% if (gateReady) { %><script nonce="<%= nonce %>">
+(function () {
+  var token = <%- JSON.stringify(token) %>;
+  var linkParam = <%- JSON.stringify(linkToken ? '&r=' + encodeURIComponent(linkToken) : '') %>;
+  var viewId = (function () {
+    try {
+      var a = new Uint8Array(16);
+      (crypto || {}).getRandomValues && crypto.getRandomValues(a);
+      return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    } catch (e) {
+      return String(Date.now()) + Math.random().toString(16).slice(2);
+    }
+  })();
+
+  function collect() {
+    var n = navigator || {};
+    var s = screen || {};
+    var conn = n.connection || {};
+    var tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+    return {
+      screenW: s.width, screenH: s.height, availW: s.availWidth, availH: s.availHeight,
+      viewportW: window.innerWidth, viewportH: window.innerHeight,
+      colorDepth: s.colorDepth, pixelRatio: window.devicePixelRatio,
+      timezone: tz, timezoneOffset: new Date().getTimezoneOffset(),
+      languages: (n.languages || [n.language]).slice(0, 10),
+      platform: n.platform || '', hardwareConcurrency: n.hardwareConcurrency,
+      deviceMemory: n.deviceMemory, maxTouchPoints: n.maxTouchPoints,
+      cookieEnabled: n.cookieEnabled, doNotTrack: n.doNotTrack,
+      referrer: document.referrer || '', connection: conn.effectiveType || ''
+    };
+  }
+
+  function collectWebgl() {
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return null;
+      var ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? {
+        vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '',
+        renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || ''
+      } : { vendor: '', renderer: '' };
+    } catch (e) { return null; }
+  }
+
+  function collectFonts() {
+    try {
+      if (!document.fonts || !document.fonts.check) return [];
+      return ['0xProto', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New', 'Noto Sans']
+        .filter(function (font) { return document.fonts.check('12px "' + font + '"'); });
+    } catch (e) { return []; }
+  }
+
+  function collectUaData() {
+    var ua = navigator.userAgentData;
+    if (!ua) return Promise.resolve(null);
+    try {
+      return ua.getHighEntropyValues([
+        'architecture', 'bitness', 'model', 'platformVersion', 'uaFullVersion', 'fullVersionList'
+      ]).then(function (high) {
+        return {
+          brands: ua.brands || [], mobile: !!ua.mobile, platform: ua.platform || '',
+          architecture: high.architecture || '', bitness: high.bitness || '', model: high.model || '',
+          platformVersion: high.platformVersion || '', uaFullVersion: high.uaFullVersion || '',
+          fullVersionList: high.fullVersionList || []
+        };
+      }).catch(function () {
+        return { brands: ua.brands || [], mobile: !!ua.mobile, platform: ua.platform || '' };
+      });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function collectBattery() {
+    if (!navigator.getBattery) return Promise.resolve(null);
+    try {
+      return navigator.getBattery().then(function (battery) {
+        return {
+          charging: !!battery.charging,
+          level: typeof battery.level === 'number' ? battery.level : null,
+          chargingTime: battery.chargingTime,
+          dischargingTime: battery.dischargingTime
+        };
+      }).catch(function () { return null; });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function collectMediaCapabilities() {
+    if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return Promise.resolve(null);
+    var configs = {
+      image: { type: 'file', video: { contentType: 'video/mp4; codecs="avc1.42E01E"', width: 640, height: 360, bitrate: 1000000, framerate: 30 } },
+      video: { type: 'file', video: { contentType: 'video/webm; codecs="vp8"', width: 640, height: 360, bitrate: 1000000, framerate: 30 } }
+    };
+    return Promise.all(Object.keys(configs).map(function (key) {
+      return navigator.mediaCapabilities.decodingInfo(configs[key]).then(function (info) {
+        return [key, { supported: !!info.supported, smooth: !!info.smooth, powerEfficient: !!info.powerEfficient }];
+      }).catch(function () { return [key, null]; });
+    })).then(function (entries) { return Object.fromEntries(entries); });
+  }
+
+  function sendTelemetry(client) {
+    try {
+      fetch('/i/' + encodeURIComponent(token) + '/telemetry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewId: viewId, client: client }),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  var clientTelemetry = collect();
+  clientTelemetry.webgl = collectWebgl();
+  clientTelemetry.fontFeatures = collectFonts();
+  Promise.race([
+    Promise.all([collectUaData(), collectBattery(), collectMediaCapabilities()]),
+    new Promise(function (resolve) { setTimeout(function () { resolve([null, null, null]); }, 1500); })
+  ]).then(function (extra) {
+    clientTelemetry.userAgentData = extra[0];
+    clientTelemetry.battery = extra[1];
+    clientTelemetry.mediaCapabilities = extra[2];
+    sendTelemetry(clientTelemetry);
+  }).catch(function () { sendTelemetry(clientTelemetry); });
+
+  // Render only the freshly watermarked response.
+  var el = document.getElementById('protected');
+  <% if (mediaType === 'video') { %>
+  var video = document.createElement('video');
+  video.controls = true;
+  video.playsInline = true;
+  video.preload = 'metadata';
+  video.style.width = '100%';
+  video.style.maxHeight = '80vh';
+  video.style.display = 'block';
+  video.src = '/i/' + encodeURIComponent(token) + '/render.mp4?v=' + viewId + linkParam;
+  el.appendChild(video);
+  <% } else { %>
+  el.style.backgroundImage = 'url("/i/' + encodeURIComponent(token) + '/render.png?v=' + viewId + linkParam + '")';
+  <% } %>
+
+  // Best-effort save deterrents (a screenshot can never be stopped).
+  var block = function (e) { e.preventDefault(); return false; };
+  var wrap = document.getElementById('pwrap');
+  ['contextmenu', 'dragstart', 'selectstart'].forEach(function (ev) {
+    wrap.addEventListener(ev, block);
+    document.addEventListener(ev, function (e) { if (wrap.contains(e.target)) block(e); });
+  });
+  document.addEventListener('keydown', function (e) {
+    var k = (e.key || '').toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && (k === 's' || k === 'p' || k === 'u')) block(e);
+  });
+})();
+</script>
+<% } %>
+<%- include('partials/foot') %>

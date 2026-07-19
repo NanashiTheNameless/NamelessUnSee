@@ -1,0 +1,31 @@
+<% var pageTitle = 'NamelessUnSee - traceable ephemeral image host'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>NamelessUnSee</h1>
+  <p class="muted">A transparent-source successor to the now defunct unsee.cc.<br>Share an image or video for a limited time; everyone who views it sees a copy stamped with their own IP, location and device, so if it leaks, you know who leaked it.</p>
+
+  <div class="card">
+    <h2>How it works</h2>
+    <ol>
+      <li>Sign up for an account. New accounts are held until an admin approves them.</li>
+      <li>Upload an image or video. It is kept temporarily and deletes itself when its time or view limit runs out.</li>
+      <li>Share the link. Each visitor must accept the Terms and Privacy Policy before anything is shown.</li>
+      <li>Every view is stamped with that viewer's IP, location and device, and logged for you to review.</li>
+    </ol>
+    <p class="muted" style="margin-bottom:0">Your original file stays private on the server. Viewers only ever see a copy made just for them, carrying their own details as a visible watermark.</p>
+  </div>
+
+  <% if (!user) { %>
+    <a class="btn" href="/signup">Create an account</a>
+    <a class="btn secondary" href="/login">Log in</a>
+  <% } else { %>
+    <a class="btn" href="/dashboard">Go to your dashboard</a>
+  <% } %>
+
+  <div class="card">
+    <h2>An honest note on protection</h2>
+    <p class="muted" style="margin-bottom:0">No website can stop someone from photographing or screenshotting their own screen.<br>What NamelessUnSee guarantees is this: the original file is never served- every copy that leaves the server is watermarked and unique to the person viewing it.<br>That is how forensic, leak-tracing watermarking works: a leak can't be prevented outright, but it can always be traced back to its source.</p>
+  </div>
+</div>
+<%- include('partials/foot') %>

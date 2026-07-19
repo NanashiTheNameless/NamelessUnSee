@@ -1,0 +1,162 @@
+<% var pageTitle = 'NamelessUnSee - moderation review'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/admin">← Admin</a></p>
+  <h1>Moderation review</h1>
+
+  <div class="warn">
+    Items below were flagged automatically and are <strong>held from viewers</strong>
+    pending your decision<% if (!holdOnReview) { %> (note: hold-on-review is OFF, so
+    classifier-flagged items remain viewable)<% } %>.<br>Flagged images may be
+    sensitive- review carefully. <br>A classifier flag is only a suspicion; use your
+    judgement and prefer "Allow" when in doubt to avoid punishing false positives.<br>
+    <strong>Confirmed known-illegal content (e.g. CSAM) carries legal reporting
+    duties in most jurisdictions- consult the operator's legal guidance.</strong>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Pending <span class="muted">(<%= items.length %>)</span></h2>
+    <% if (!items.length) { %>
+      <p class="muted">Nothing awaiting review.</p>
+    <% } %>
+    <% items.forEach(function(img){ %>
+      <div class="card" style="background:#0d1117">
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline">
+          <span class="pill <%= img.moderation_status === 'quarantined' ? 'rejected' : 'pending' %>"><%= img.moderation_status %></span>
+          <strong class="mono"><%= img.moderation_reason || '' %></strong>
+          <% if (img.moderation_score != null) { %><span class="muted">score <%= Number(img.moderation_score).toFixed(3) %></span><% } %>
+          <% let pendingReports = []; try { pendingReports = img.moderation_details ? JSON.parse(img.moderation_details) : []; } catch {} %>
+          <% if (pendingReports.length) { %>
+            <span class="muted">models:
+              <% pendingReports.forEach(function(report, index) { %><%= index ? ', ' : '' %><span class="mono" title="Model: <%= report.model %>; result: <%= report.label || 'neutral' %><% if (report.score != null) { %>; score: <%= Number(report.score).toFixed(3) %><% } else if (report.error) { %>; status: <%= report.error %><% } %>"><%= report.model %>=<%= report.label || 'neutral' %><% if (report.score != null) { %> (<%= Number(report.score).toFixed(3) %>)<% } else if (report.error) { %> (<%= report.error %>)<% } %></span><% }); %>
+            </span>
+          <% } %>
+          <span class="spacer" style="flex:1"></span>
+          <span class="muted mono">owner: <%= img.owner_name %> &lt;<%= img.owner_email %>&gt; (#<%= img.owner_id %>)</span>
+        </div>
+
+        <details style="margin:.6rem 0">
+          <summary class="muted">Show flagged image (sensitive)</summary>
+          <% if (img.mime && img.mime.startsWith('video/')) { %>
+            <video src="/admin/review/<%= img.token %>/image" controls preload="metadata" style="max-width:520px; max-height:320px; margin-top:.5rem; border:1px solid #30363d; border-radius:6px"></video>
+          <% } else { %>
+            <img src="/admin/review/<%= img.token %>/image" alt="flagged image" style="max-width:320px; max-height:320px; margin-top:.5rem; border:1px solid #30363d; border-radius:6px">
+          <% } %>
+        </details>
+
+        <div style="display:flex; gap:.4rem; flex-wrap:wrap">
+          <form method="post" action="/admin/review/<%= img.token %>/allow">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <button class="btn small" type="submit">Allow</button>
+          </form>
+          <form method="post" action="/admin/review/<%= img.token %>/deny">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <button class="btn secondary small" type="submit">Deny (delete)</button>
+          </form>
+          <form method="post" action="/admin/review/<%= img.token %>/blocklist">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <button class="btn danger small" type="submit">Deny + blocklist hash</button>
+          </form>
+          <form method="post" action="/admin/review/<%= img.token %>/blocklist-ban">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <button class="btn danger small" type="submit">Blocklist + ban owner</button>
+          </form>
+        </div>
+      </div>
+    <% }); %>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Recent uploads</h2>
+    <p class="muted">Use <strong>Flag for review</strong> to manually send an active upload to the queue.<br>This does not train the classifier; marking an item bad and adding its hash to the blocklist is the available local learning mechanism.</p>
+    <% if (!recent.length) { %>
+      <p class="muted">No uploads found.</p>
+    <% } else { %>
+      <div class="scroll"><table>
+        <thead><tr><th>Preview</th><th>Owner</th><th>Uploaded</th><th>Status</th><th>Classifier</th><th>Actions</th></tr></thead>
+        <tbody>
+        <% recent.forEach(function(img){ %>
+          <tr>
+            <td>
+              <details>
+                <summary class="muted">Show upload</summary>
+                <% if (img.mime && img.mime.startsWith('video/')) { %>
+                  <video src="/admin/review/<%= img.token %>/image" controls preload="metadata" style="max-width:160px; max-height:100px"></video>
+                <% } else { %>
+                  <img src="/admin/review/<%= img.token %>/image" alt="upload preview" loading="lazy" style="max-width:120px; max-height:100px; object-fit:contain">
+                <% } %>
+              </details>
+            </td>
+            <td class="mono"><%= img.owner_name %><br><span class="muted"><%= img.owner_email %></span></td>
+            <td class="muted"><%= new Date(img.created_at).toISOString().slice(0,16).replace('T',' ') %></td>
+            <td><span class="pill <%= img.moderation_status === 'ok' || img.moderation_status === 'approved' ? 'approved' : 'pending' %>"><%= img.moderation_status %></span></td>
+            <td class="muted">
+              <%= img.moderation_reason || '-' %><% if (img.moderation_score != null) { %><br>score <%= Number(img.moderation_score).toFixed(3) %><% } %>
+              <% let recentReports = []; try { recentReports = img.moderation_details ? JSON.parse(img.moderation_details) : []; } catch {} %>
+              <% recentReports.forEach(function(report) { %><br><span class="mono" title="Model: <%= report.model %>; result: <%= report.label || 'neutral' %><% if (report.score != null) { %>; score: <%= Number(report.score).toFixed(3) %><% } else if (report.error) { %>; status: <%= report.error %><% } %>"><%= report.model %>: <%= report.label || 'neutral' %><% if (report.score != null) { %> (<%= Number(report.score).toFixed(3) %>)<% } else if (report.error) { %> (<%= report.error %>)<% } %></span><% }); %>
+            </td>
+            <td>
+              <% if (img.moderation_status === 'ok' || img.moderation_status === 'approved') { %>
+                <form method="post" action="/admin/review/<%= img.token %>/flag">
+                  <input type="hidden" name="_csrf" value="<%= csrf %>">
+                  <button class="btn danger small" type="submit">Flag for review</button>
+                </form>
+              <% } else { %>
+                <span class="muted">Already queued</span>
+              <% } %>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Perceptual-hash blocklist <span class="muted">(<%= blocklist.length %>)</span></h2>
+    <p class="muted">Upload an image to add its perceptual hash to the blocklist. The
+      image itself is not stored- only its hash. Future uploads matching a blocked
+      hash are auto-quarantined.</p>
+
+    <form method="post" action="/admin/blocklist/add" enctype="multipart/form-data" style="display:flex; gap:.5rem; flex-wrap:wrap; align-items:center; margin-bottom:1rem">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="file" name="image" accept="image/*" required>
+      <input type="text" name="label" placeholder="label (optional)" maxlength="120">
+      <button class="btn danger small" type="submit">Add hash</button>
+    </form>
+
+    <% if (blocklist.length) { %>
+      <div class="scroll"><table>
+        <thead><tr><th>Hash</th><th>Label</th><th>Added</th><th></th></tr></thead>
+        <tbody>
+        <% blocklist.forEach(function(b){ %>
+          <tr>
+            <td class="mono"><%= b.phash %></td>
+            <td class="muted"><%= b.label || '' %></td>
+            <td class="muted"><%= new Date(b.created_at).toISOString().slice(0,16).replace('T',' ') %></td>
+            <td>
+              <form method="post" action="/admin/blocklist/<%= b.id %>/delete">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <button class="btn secondary small" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }); %>
+        </tbody>
+      </table></div>
+    <% } %>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Detection status</h2>
+    <ul class="muted" style="margin:0">
+      <li>Perceptual-hash blocklist: <strong>active</strong>.</li>
+      <li>NSFW classifier (review-only): <strong><%= nsfwEnabled ? 'enabled' : 'disabled' %></strong>
+       - requires <code>@huggingface/transformers</code> installed to actually run.</li>
+      <li>Known-CSAM providers (Cloudflare / PhotoDNA / Arachnid): <strong>scaffolding, disabled</strong>
+       - require vetted access.</li>
+    </ul>
+  </div>
+</div>
+<%- include('partials/foot') %>

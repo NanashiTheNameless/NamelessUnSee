@@ -1,0 +1,29 @@
+{
+  "name": "namelessunsee",
+  "version": "1.0.0",
+  "description": "NamelessUnSee - transparent-source, consent-gated ephemeral image host with per-viewer forensic watermarking. A spiritual successor to the now defunct unsee.cc.",
+  "license": "SEE-LICENSE-IN-LICENSE.md",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "packageManager": "yarn@4.17.1",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
+    "create-admin": "node src/scripts/create-admin.js",
+    "set-owner": "node src/scripts/set-owner.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1090.0",
+    "better-sqlite3": "^12.11.1",
+    "cookie-parser": "^1.4.7",
+    "ejs": "^6.0.1",
+    "express": "^5.2.1",
+    "maxmind": "^5.0.6",
+    "multer": "^2.2.0",
+    "sharp": "^0.35.3"
+  }
+}

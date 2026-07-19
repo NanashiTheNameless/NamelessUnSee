@@ -1,0 +1,44 @@
+<% var pageTitle = 'NamelessUnSee - security'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/dashboard">- Dashboard</a></p>
+  <h1>Account security</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <% if (notice) { %><div class="notice"><%= notice %></div><% } %>
+
+  <div class="card" style="max-width:680px">
+    <h2 style="margin-top:0">Email verification</h2>
+    <p>Email verification is required by default for every login. It uses the account email and Resend.</p>
+  </div>
+
+  <div class="card" style="max-width:680px">
+    <h2 style="margin-top:0">Authenticator app</h2>
+    <% if (totpEnabled) { %>
+      <p class="notice">TOTP is enabled as an alternative login method.</p>
+      <form method="post" action="/account/security/totp/disable" style="max-width:420px">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <label for="disable-password">Current password</label>
+        <input type="password" id="disable-password" name="password" autocomplete="current-password" required>
+        <p><button class="btn danger small" type="submit">Disable TOTP</button></p>
+      </form>
+    <% } else if (setupSecret) { %>
+      <p>Add this secret to an authenticator app, then enter the six-digit code:</p>
+      <p class="mono" style="word-break:break-all; background:#0d1117; padding:.7rem; border-radius:6px"><%= setupSecret %></p>
+      <p class="muted mono" style="word-break:break-all">Manual setup URI: <%= setupUri %></p>
+      <form method="post" action="/account/security/totp/confirm" style="max-width:420px">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <label for="totp-code">Authenticator code</label>
+        <input type="text" id="totp-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+        <p><button class="btn small" type="submit">Confirm and enable TOTP</button></p>
+      </form>
+    <% } else { %>
+      <p>TOTP is optional. Enroll an authenticator app to use six-digit codes instead of email at login.</p>
+      <form method="post" action="/account/security/totp/start">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <button class="btn secondary small" type="submit">Set up TOTP</button>
+      </form>
+    <% } %>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -1,0 +1,20 @@
+node_modules/
+data/
+!data/.gitkeep
+*.log
+.env
+.env.local
+npm-debug.log*
+.DS_Store
+coverage/
+dist/
+
+# Yarn Berry (node-modules linker): commit the release + lockfile, ignore the rest
+.yarn/*
+!.yarn/releases
+!.yarn/patches
+!.yarn/plugins
+!.yarn/sdks
+!.yarn/versions
+.yarn/install-state.gz
+.pnp.*

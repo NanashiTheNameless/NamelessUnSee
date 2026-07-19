@@ -1,0 +1,12 @@
+<% var pageTitle = 'NamelessUnSee - account pending'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Thanks- your account is pending</h1>
+  <div class="card">
+    <p>Your account has been created and is now <span class="pill pending">awaiting approval</span> by an administrator.</p>
+    <p class="muted">You will be able to log in and upload once an admin approves your account. You can try logging in later.</p>
+    <p><a class="btn secondary" href="/login">Go to login</a></p>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -1,0 +1,25 @@
+<% var pageTitle = 'NamelessUnSee - log in'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Log in</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:420px">
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="<%= next %>">
+      <label for="identifier">Email or username</label>
+      <input type="text" id="identifier" name="identifier" autocomplete="username" value="<%= values.identifier || '' %>" required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <div style="margin-top:1rem">
+        <%- include('partials/altcha-widget') %>
+      </div>
+      <p style="margin-top:1.1rem"><button class="btn" type="submit">Log in</button></p>
+    </form>
+    <p class="muted" style="margin-bottom:0"><a href="/forgot-password">Forgot password?</a></p>
+    <p class="muted" style="margin:.25rem 0 0"><a href="/forgot-email">Forgot email?</a></p>
+    <p class="muted" style="margin:.25rem 0"><a href="/forgot-username">Forgot username?</a></p>
+    <p class="muted">No account? <a href="/signup">Sign up</a> (admin approval required).</p>
+  </div>
+</div>
+<%- include('partials/foot') %>

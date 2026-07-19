@@ -1,0 +1,190 @@
+<% var pageTitle = 'NamelessUnSee - Privacy Policy'; %>
+<%- include('partials/legal-head', { pageTitle: pageTitle }) %>
+
+  <h1>Privacy Policy</h1>
+  <p class="muted">Last updated: 2026-07-19. This instance is operated by
+    <strong><%= operator.name %></strong><% if (operator.jurisdiction) { %> (<%= operator.jurisdiction %>)<% } %>.</p>
+
+  <div class="warn">
+    <strong>Plain statement.</strong> When you view shared content (an image or
+    video), this service logs everything it reasonably can about your visit and
+    burns identifying details into the copy shown to you. We do not hide this.
+    This page, the
+    <a href="/tos">Terms</a>, and the warning page do not log you and load nothing
+    but their own text, the site font, a small self-hosted script that reveals the
+    operator's contact address (it runs entirely in your browser and makes no
+    network requests), and (on the warning page) a self-hosted bot check. If
+    enabled by the deployment, Cloudflare Insights may also be injected by the
+    edge and is permitted by the page policy.
+  </div>
+
+  <h2>1. Roles</h2>
+  <p>For personal data collected from viewers of a shared image, the person who
+    uploaded and shared that image is the data <em>controller</em>; the operator of
+    this instance provides the platform and acts as a <em>processor</em> on their
+    behalf, and is the controller for account data and site operation. <br>
+    Contact: <% if (contactObfuscated) { %><strong><span data-obfuscated-email="<%= contactObfuscated %>">(the
+    contact address appears here once JavaScript loads)</span></strong><% } else { %>the
+    operator of this instance<% } %>.</p>
+
+  <h2>2. What we do NOT collect on legal pages</h2>
+  <p>The warning page, this Privacy Policy, and the Terms perform no application
+    logging and no application geolocation. Cloudflare Insights may be injected
+    by the edge if enabled by the deployment. Collection by this application
+    begins only after you pass the warning page and continue to an image.</p>
+
+  <h2>3. What is collected when you view a shared image</h2>
+  <ul>
+    <li><strong>Network:</strong> your public IP address, IP-based geolocation
+      (country, and region/city and network operator/ASN where available).</li>
+    <li><strong>Connection type:</strong> whether your connection appears to be a
+      VPN, proxy, Tor exit, or datacenter/hosting network. Such connections are
+      refused, and access is refused where your connection cannot be identified.</li>
+    <li><strong>Device and request:</strong> your User-Agent and other HTTP request
+      headers (excluding credentials such as cookies and authorization headers), and
+      the browser, operating system, and device type derived from them.</li>
+    <li><strong>Browser-exposed details (via a small script):</strong> screen and
+      window dimensions, colour depth, pixel ratio, timezone and offset, languages,
+      platform, CPU core and device-memory hints, touch-point count, cookie-enabled
+      flag, Do-Not-Track signal, network-connection hints reported by the browser,
+      User-Agent Client Hints where available, WebGL vendor and renderer where
+      exposed, battery state and timing hints where available, media decoding
+      capability results, a small fixed set of font feature checks, and the
+      referring page.</li>
+    <li><strong>Event:</strong> the time of the view and the image reference.</li>
+  </ul>
+  <p>This information is written to an access log <em>and</em> is rendered as a
+    visible watermark into the copy of the image shown to you.</p>
+
+  <h2>4. Account data</h2>
+  <p>If you register, we store your email address, username, a hashed (scrypt)
+    password- never the plaintext- your role, rank, and approval status, account
+    timestamps, your upload preferences and any per-account limits, and the IP
+    address of your most recent login (used for security and abuse prevention,
+    including bans). Email 2FA and account recovery (password, email, or username)
+    store short-lived challenge records; only a hash of each code is stored. If
+    you opt into TOTP, we store the authenticator secret needed to verify codes;
+    it never leaves the server.</p>
+
+  <h2>4a. Uploaded media and moderation</h2>
+  <p>Uploaded originals are encrypted at rest (AES-256-GCM) before being written
+    to storage, and are never served to viewers- only watermarked copies are.
+    At upload time, media may be scanned <em>locally on the server</em>: a
+    perceptual fingerprint (hash) of the media is computed and compared against an
+    operator-managed blocklist, and an optional content classifier may run,
+    also locally. No upload content is sent to a third party for scanning.
+    Flagged uploads are queued for review by administrators. The fingerprint and
+    moderation status are stored with the image record.</p>
+  <p><strong>Administrator access:</strong> site administrators can retrieve the
+    original, un-watermarked file of any upload- for moderation review, abuse
+    handling, and site operation. The guarantee that the original is never served
+    applies to viewers; it does not limit administrators of the instance.</p>
+
+  <h2>4b. Leak reports</h2>
+  <p>Account holders may report unauthorised redistribution of media they shared.
+    A report stores the reporter, the affected image, the reason and details
+    given, uploaded screenshot evidence, and- when the report is filed against a
+    specific logged view- a link to that access-log entry. Reports are visible
+    to administrators for review and enforcement.</p>
+
+  <h2>5. Cookies</h2>
+  <ul>
+    <li><strong>Consent cookie</strong>- a signed session cookie recording that you
+      accepted these terms; it is cleared when you close your browser, so the warning
+      is shown once per session.</li>
+    <li><strong>Session cookie (<code>sid</code>)</strong>- set only if you log in;
+      signed, HTTP-only, used to keep you signed in.</li>
+    <li><strong>2FA and recovery challenge cookies</strong>- short-lived, signed,
+      HTTP-only cookies used only while completing a login verification or account
+      recovery challenge (including a temporary cookie that enforces a cooldown on
+      repeated verification emails).</li>
+    <li><strong>View-gate cookie</strong>- a short-lived (about 10 minutes),
+      signed, HTTP-only cookie set after you pass the bot check on an image's view
+      page; it is scoped to that image and marks that the check was completed.</li>
+  </ul>
+  <p>No advertising, analytics, or third-party tracking cookies are used.</p>
+
+  <h2>6. Why we collect it (purposes and legal bases)</h2>
+  <ul>
+    <li><strong>Tracing and deterring unauthorised redistribution</strong> of shared
+      images, and refusing anonymised access- the core function. Legal basis:
+      your <strong>consent</strong>, given at the warning page, together with the
+      uploader's legitimate interests.</li>
+    <li><strong>Providing accounts and the service</strong>- basis: performance of a
+      contract and legitimate interests.</li>
+    <li><strong>Security, abuse prevention, and enforcement</strong> (including bans)
+     - basis: legitimate interests and, where applicable, legal obligations.</li>
+  </ul>
+
+  <h2>7. No third-party sharing of your IP; no per-viewer external calls</h2>
+  <p>Your IP address is not sent to any third party to view an image. Proxy/VPN/Tor
+    detection and geolocation are performed locally on the server using datasets the
+    server downloads in advance (for example, MaxMind GeoLite2 and public IP lists);
+    those downloads do not include your data. Access logs and watermarked copies for
+    an image are available to the account holder who shared that image and to site
+    administrators. We do not sell or "share" personal information for cross-context
+    behavioural advertising.</p>
+  <p>The operator may use the following service providers as processors for site
+    operation (none of them receives viewer access logs or un-watermarked media):</p>
+  <ul>
+    <li><strong>Email delivery (Resend):</strong> account-related emails- signup
+      notices to administrators, login verification codes, and account recovery
+      codes- are sent through Resend, which processes the recipient email address
+      and the message content for delivery. If email delivery is not configured on
+      an instance, no data is sent to Resend.</li>
+    <li><strong>Hosting and network (e.g. Cloudflare):</strong> instances are
+      typically served through a reverse proxy or tunnel, whose provider processes
+      connection metadata (such as IP addresses) to route traffic. An instance may
+      also be configured to store <em>encrypted</em> media objects in Cloudflare R2;
+      the storage provider receives only encrypted bytes, and the decryption key
+      stays on the operator's server.</li>
+  </ul>
+
+  <h2>8. Retention</h2>
+  <p>Shared images are deleted automatically according to their retention settings
+    (a time limit and/or a maximum number of views). An image's access logs are kept
+    with the image record and are removed when that record is removed. Leak reports
+    and their screenshot evidence are retained until resolved and removed by the
+    operator. Account data is retained for the life of the account. The operator
+    may retain limited records longer where necessary for security or to comply
+    with legal obligations.</p>
+
+  <h2>9. International transfers</h2>
+  <p>Data is processed on the operator's infrastructure<% if (operator.jurisdiction) { %>
+    in <%= operator.jurisdiction %><% } %>. Where the operator transfers data across
+    borders, they are responsible for using an appropriate transfer mechanism.</p>
+
+  <h2>10. Your rights</h2>
+  <p>Depending on your location, you may have the right to access, correct, delete,
+    restrict, or object to the processing of your personal data, to data portability,
+    and to withdraw consent (which does not affect processing already carried out).
+    Under the GDPR/UK GDPR you may also complain to a supervisory authority. Under the
+    CCPA/CPRA you may request access to and deletion of your personal information and
+    are entitled not to be discriminated against for exercising these rights; we do
+    not sell your personal information. To exercise any right, contact
+    <% if (contactObfuscated) { %><strong><span data-obfuscated-email="<%= contactObfuscated %>">(the
+    contact address appears here once JavaScript loads)</span></strong><% } else { %>the
+    operator<% } %>. Requests about a specific shared image may be directed to the
+    uploader as controller, and the operator will assist as processor.</p>
+
+  <h2>11. Do Not Track</h2>
+  <p>We record the presence of your browser's Do-Not-Track signal as part of the
+    logged visit, but because collection here is the explicit, consented purpose of
+    the service, a DNT signal does not by itself disable it- if you do not consent,
+    do not continue past the warning page.</p>
+
+  <h2>12. Children</h2>
+  <p>The service is not directed to children and is not intended for anyone under the
+    age of majority in their jurisdiction.</p>
+
+  <h2>13. Changes</h2>
+  <p>This policy may be updated; the "last updated" date will change accordingly.</p>
+
+  <p class="foot muted"><a href="/">Back</a> - <a href="/tos">Terms of Service</a></p>
+</div>
+<% if (contactObfuscated) { %>
+<script src="/altcha-obfuscation.min.js"></script>
+<script src="/email-reveal.js"></script>
+<% } %>
+</body>
+</html>

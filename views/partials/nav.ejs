@@ -1,0 +1,27 @@
+<header class="nav">
+  <span class="brand"><a href="/">NamelessUnSee</a></span>
+  <span class="spacer"></span>
+  <% if (user) { %>
+    <a href="/dashboard">Dashboard</a>
+    <% if (user.role === 'admin') { %>
+      <span class="admin-nav">
+        <a class="admin-nav-main" href="/admin">Admin</a>
+        <div class="admin-nav-menu">
+          <a href="/admin/users">Users</a>
+          <a href="/admin/review">Review<% if (typeof reviewPending !== 'undefined' && reviewPending > 0) { %> <span class="pill rejected"><%= reviewPending %></span><% } %></a>
+          <a href="/admin/reports">Reports<% if (typeof reportPending !== 'undefined' && reportPending > 0) { %> <span class="pill pending"><%= reportPending %></span><% } %></a>
+          <a href="/admin/bans">Bans</a>
+          <a href="/admin/audit">Audit log</a>
+        </div>
+      </span>
+    <% } %>
+    <a class="muted mono" href="/account"><%= user.username %></a>
+    <form method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <button class="btn secondary small" type="submit">Log out</button>
+    </form>
+  <% } else { %>
+    <a class="btn secondary small" href="/login">Log in</a>
+    <a class="btn small" href="/signup">Sign up</a>
+  <% } %>
+</header>

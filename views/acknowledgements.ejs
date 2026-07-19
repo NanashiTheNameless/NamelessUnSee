@@ -1,0 +1,84 @@
+<% var pageTitle = 'NamelessUnSee - open-source acknowledgements'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Open-source acknowledgements</h1>
+  <p class="muted">NamelessUnSee is transparent-source software. Its full source
+    code is available at
+    <a href="<%= sourceUrl %>"><%= sourceUrl %></a>.<br>It is built on, and bundles or
+    downloads, the open-source work below- each under its own licence. Thank you
+    to their authors.</p>
+
+  <div class="card">
+    <h2 style="margin-top:0">Bundled assets</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Component</th><th>Purpose</th><th>Licence</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><a href="https://github.com/0xType/0xProto">0xProto</a></td>
+          <td>The typeface used throughout the UI and watermarks</td>
+          <td><a href="https://github.com/0xType/0xProto/blob/main/LICENSE">SIL Open Font License 1.1</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://github.com/altcha-org/altcha">ALTCHA</a></td>
+          <td>Self-hosted proof-of-work bot check</td>
+          <td><a href="https://github.com/altcha-org/altcha/blob/main/LICENSE.txt">MIT</a></td>
+        </tr>
+      </tbody>
+    </table></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Runtime data sets (downloaded, not bundled)</h2>
+    <p class="muted">Used locally for geolocation and proxy/VPN/Tor detection. A
+      viewer's IP is never sent to these providers; the data is fetched to the
+      server in advance and refreshed automatically. Each retains its own terms.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Source</th><th>Purpose</th><th>Terms</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><a href="https://www.maxmind.com">MaxMind GeoLite2</a> (ASN + City)</td>
+          <td>Geolocation and network/ASN lookup</td>
+          <td><a href="https://www.maxmind.com/en/end-user-license-agreement">GeoLite2 End User License Agreement</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://www.torproject.org">Tor Project</a> exit list</td>
+          <td>Tor exit-node detection</td>
+          <td><a href="https://gitlab.torproject.org/tpo/core/tor/-/raw/HEAD/LICENSE">Unclear, assumed to match core code (3-clause BSD)</a></td>
+        </tr>
+        <tr>
+          <td><a href="https://github.com/X4BNet/lists_vpn">X4BNet/lists_vpn</a></td>
+          <td>VPN &amp; datacenter IP ranges</td>
+          <td><a href="https://github.com/X4BNet/lists_vpn/#license">MIT</a></td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="margin-bottom:0">This product includes GeoLite2 data
+      created by MaxMind, available from
+      <a href="https://www.maxmind.com">https://www.maxmind.com</a>.</p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Software dependencies</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Package</th><th>Purpose</th><th>Licence</th></tr></thead>
+      <tbody>
+        <tr><td><a href="https://nodejs.org">Node.js</a></td><td>Runtime</td><td><a href="https://github.com/nodejs/node/blob/main/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://expressjs.com">express</a></td><td>HTTP server</td><td><a href="https://github.com/expressjs/express/blob/master/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://github.com/WiseLibs/better-sqlite3">better-sqlite3</a></td><td>Database</td><td><a href="https://github.com/WiseLibs/better-sqlite3/blob/master/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://sharp.pixelplumbing.com">sharp</a> (libvips)</td><td>Image processing / watermark compositing</td><td><a href="https://github.com/lovell/sharp/blob/master/LICENSE">Apache-2.0 (LGPL-2.1+ libvips)</a></td></tr>
+        <tr><td><a href="https://github.com/mde/ejs">ejs</a></td><td>Server-side templates</td><td><a href="https://github.com/mde/ejs/blob/master/LICENSE">Apache-2.0</a></td></tr>
+        <tr><td><a href="https://github.com/expressjs/multer">multer</a></td><td>File uploads</td><td><a href="https://github.com/expressjs/multer/blob/master/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://github.com/expressjs/cookie-parser">cookie-parser</a></td><td>Cookie parsing</td><td><a href="https://github.com/expressjs/cookie-parser/blob/master/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://github.com/runk/node-maxmind">node-maxmind</a></td><td>Reads MaxMind .mmdb databases</td><td><a href="https://github.com/runk/node-maxmind/blob/master/LICENSE">MIT</a></td></tr>
+        <tr><td><a href="https://yarnpkg.com">Yarn Berry</a></td><td>Package manager</td><td><a href="https://github.com/yarnpkg/yarn/blob/master/LICENSE">BSD-2-Clause</a></td></tr>
+      </tbody>
+    </table></div>
+    <p class="muted" style="margin-bottom:0">The authoritative dependency list and
+      versions are in <a href="<%= sourceUrl %>"><code>package.json</code> / <code>yarn.lock</code></a>
+      in the source repository.</p>
+  </div>
+
+  <p><a class="btn secondary" href="/license">About the code licence →</a></p>
+</div>
+<%- include('partials/foot') %>

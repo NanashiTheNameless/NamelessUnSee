@@ -1,0 +1,14 @@
+<link rel="stylesheet" href="/altcha-business.css">
+<altcha-widget
+  challenge="/altcha/challenge"
+  name="altcha"
+  type="<%= altcha.widget.type %>"
+  display="<%= altcha.widget.display %>"
+  codechallenge="<%= altcha.widget.codeChallengeDisplay %>"
+  auto="<%= altcha.widget.auto %>"
+  lang="<%= altcha.widget.lang %>"
+  theme="<%= altcha.widget.theme %>"
+  <% if (altcha.widget.hideLogo) { %>hidelogo<% } %>
+  <% if (altcha.widget.hideFooter) { %>hidefooter<% } %>
+></altcha-widget>
+<script src="/altcha.min.js" async defer></script>

@@ -1,0 +1,16 @@
+<% var pageTitle = 'NamelessUnSee - unavailable'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1><%= expired ? 'This image has expired' : 'Image not found' %></h1>
+  <div class="card">
+    <p class="muted">
+      <% if (expired) { %>
+        The image you are trying to view has passed its expiry window and has been deleted.
+      <% } else { %>
+        There is no image at this link. It may have been deleted or never existed.
+      <% } %>
+    </p>
+  </div>
+</div>
+<%- include('partials/foot') %>

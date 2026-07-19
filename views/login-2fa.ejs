@@ -1,0 +1,32 @@
+<% var pageTitle = 'NamelessUnSee - verify login'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Verify login</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:420px">
+    <% if (method === 'email') { %>
+      <p>We sent a verification code to <span class="mono"><%= email %></span>.</p>
+    <% } else { %>
+      <p>Enter the current code from your authenticator app.</p>
+    <% } %>
+    <form method="post" action="/login/2fa">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <input type="hidden" name="next" value="<%= next %>">
+      <label for="code">Verification code</label>
+      <input type="text" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+      <p style="margin-top:1rem"><button class="btn" type="submit">Verify</button></p>
+    </form>
+    <p class="muted"><a href="/login?next=<%= encodeURIComponent(next) %>">Start over</a></p>
+    <% if (method === 'email') { %>
+      <form method="post" action="/login/2fa/resend" style="margin-top:.8rem">
+        <input type="hidden" name="_csrf" value="<%= csrf %>">
+        <input type="hidden" name="next" value="<%= next %>">
+        <button class="btn secondary small" id="resend-btn" data-wait="<%= locals.resendWaitSeconds || 0 %>" type="submit">Request another email</button>
+        <% if (locals.resendWaitSeconds) { %><span class="muted" id="resend-wait-note"> Available after <%= resendWaitSeconds %> seconds.</span><% } %>
+      </form>
+      <script src="/resend-countdown.js"></script>
+    <% } %>
+  </div>
+</div>
+<%- include('partials/foot') %>

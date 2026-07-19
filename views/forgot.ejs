@@ -1,0 +1,35 @@
+<% var labels = { password: 'Password', email: 'Email Address', username: 'Username' }; %>
+<% var pageTitle = 'NamelessUnSee - forgot ' + labels[kind].toLowerCase(); %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Forgot <%= labels[kind] %></h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <% if (notice) { %><div class="notice"><%= notice %></div><% } %>
+  <div class="card" style="max-width:420px">
+    <% if (kind === 'password') { %>
+      <p>Enter your email or username. We will send a password reset code to the email stored on the account.</p>
+      <form method="post" action="/forgot-password">
+        <label for="identifier">Email or username</label>
+        <input type="text" id="identifier" name="identifier" value="<%= value %>" required autofocus>
+    <% } else if (kind === 'email') { %>
+      <p>Forgot which email address your account uses? Enter your username and we
+        will send a reminder to the account's email address- so check the
+        inboxes you think you might have signed up with.</p>
+      <form method="post" action="/forgot-email">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" value="<%= value %>" required autofocus>
+    <% } else { %>
+      <p>Forgot your username? Enter your account's email address and we will
+        send your username to it.</p>
+      <form method="post" action="/forgot-username">
+        <label for="email">Email address</label>
+        <input type="email" id="email" name="email" value="<%= value %>" required autofocus>
+    <% } %>
+        <div style="margin-top:1rem"><%- include('partials/altcha-widget') %></div>
+        <p><button class="btn" type="submit">Continue</button></p>
+      </form>
+    <p class="muted"><a href="/login">Back to login</a></p>
+  </div>
+</div>
+<%- include('partials/foot') %>

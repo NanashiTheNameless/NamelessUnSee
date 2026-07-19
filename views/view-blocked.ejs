@@ -1,0 +1,13 @@
+<% var pageTitle = 'NamelessUnSee - access blocked'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Access blocked</h1>
+  <div class="card">
+    <div class="error"><%= message %></div>
+    <p class="muted">This image is only shown to connections that can be fully
+      identified. Turn off any VPN, proxy, or Tor connection and try again from a
+      normal network.</p>
+  </div>
+</div>
+<%- include('partials/foot') %>

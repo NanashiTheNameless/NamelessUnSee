@@ -1,0 +1,67 @@
+altcha-widget[theme='business'] {
+  display: block;
+  color: #fff;
+  --altcha-border-color: #543039;
+  --altcha-border-width: 1px;
+  --altcha-border-radius: 10px;
+  --altcha-color-base: #16161c;
+  --altcha-color-base-content: #fff;
+  --altcha-color-error: #5b1825;
+  --altcha-color-error-content: #fff;
+  --altcha-color-neutral: #543039;
+  --altcha-color-neutral-content: #fff;
+  --altcha-color-primary: #d10a2c;
+  --altcha-color-primary-content: #fff;
+  --altcha-color-success: #d10a2c;
+  --altcha-color-success-content: #fff;
+  --altcha-checkbox-border-color: #fff;
+  --altcha-checkbox-border-radius: 6px;
+  --altcha-checkbox-border-width: 1px;
+  --altcha-checkbox-size: 22px;
+  --altcha-input-background-color: #111116;
+  --altcha-input-border-radius: 8px;
+  --altcha-input-border-width: 1px;
+  --altcha-input-color: #fff;
+  --altcha-max-width: 360px;
+  --altcha-padding: 0.9rem;
+  --altcha-popover-color: #543039;
+  --altcha-switch-background-color: #543039;
+  --altcha-switch-toggle-color: #fff;
+  --altcha-shadow: none;
+}
+
+altcha-widget[theme='business'] .altcha-main,
+altcha-widget[theme='business'] .altcha-popover {
+  background: linear-gradient(180deg, #202027 0%, #16161c 100%);
+  border: 1px solid #543039;
+}
+
+altcha-widget[theme='business'] .altcha-button {
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+
+altcha-widget[theme='business'] .altcha-checkbox input,
+altcha-widget[theme='business'] .altcha-input {
+  background: #111116;
+  border-color: #543039;
+}
+
+altcha-widget[theme='business'] .altcha-footer {
+  color: rgba(255,255,255,.72);
+}
+
+altcha-widget[theme='business'][hidefooter] .altcha-footer {
+  display: none;
+}
+
+altcha-widget[theme='business'][hidelogo] .altcha-logo {
+  display: none;
+}
+
+altcha-widget[theme='business'] .altcha-code-challenge-title,
+altcha-widget[theme='business'] .altcha-code-challenge-text,
+altcha-widget[theme='business'] .altcha-footer,
+altcha-widget[theme='business'] .altcha-error {
+  color: #fff;
+}
