@@ -15,9 +15,6 @@
   <% if (flagged) { %><div class="error upload-result" role="status" data-auto-dismiss="6000">Your upload was flagged by automated moderation and is held pending review by an administrator.</div><% } %>
   <% if (notice && !flagged) { %><div class="notice upload-result" role="status" data-auto-dismiss="4500"><%= notice %></div><% } %>
 
-  <style>
-    .upload-progress { display:flex; align-items:center; gap:.65rem; margin-top:.7rem; color:var(--muted); }
-  </style>
   <div class="card">
     <h2 style="margin-top:0">Upload an image or video</h2>
     <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg.</p>
@@ -53,9 +50,6 @@
       <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="timer_start" value="upload" <%= defaults.default_timer_start === 'upload' ? 'checked' : '' %> style="width:auto"> Immediately on upload</label>
 
       <p style="margin-top:1.1rem"><button id="upload-submit" class="btn" type="submit">Upload</button></p>
-      <div id="upload-progress" class="upload-progress" role="status" aria-live="polite" hidden>
-        <span>Uploading and checking your file. Please wait… Videos are sampled for moderation.</span>
-      </div>
     </form>
   </div>
 
@@ -105,7 +99,6 @@
     const form = document.getElementById('upload-form');
     const file = document.getElementById('image');
     const button = document.getElementById('upload-submit');
-    const progress = document.getElementById('upload-progress');
     const resetUploadState = () => {
       button.disabled = false;
       button.textContent = 'Upload';
