@@ -89,7 +89,7 @@ function gatePage(req, res, next) {
   // restricted to self-hosted assets and Cloudflare Insights.
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; " + scriptPolicy(res) + "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
+    "default-src 'none'; img-src 'self' data:; media-src 'self'; " + scriptPolicy(res) + "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
       `font-src 'self'; img-src 'self' data:; connect-src 'self' ${CLOUDFLARE_INSIGHTS_CONNECT}; ` +
       "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
   );
@@ -103,7 +103,7 @@ function gatePage(req, res, next) {
 function widgetPage(req, res, next) {
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; " + scriptPolicy(res) + "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
+    "default-src 'none'; img-src 'self' data:; media-src 'self'; " + scriptPolicy(res) + "; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; " +
       `font-src 'self'; img-src 'self' data:; connect-src 'self' ${CLOUDFLARE_INSIGHTS_CONNECT}; ` +
       "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
   );
