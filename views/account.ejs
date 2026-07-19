@@ -119,6 +119,43 @@
         </form>
       <% } %>
     </div>
+
+    <div class="card" style="max-width:680px">
+      <h2 style="margin-top:0">Delete account</h2>
+      <p class="muted">This permanently deletes your account and all stored files. This action cannot be undone.</p>
+
+      <% if (deleteChallenge) { %>
+        <form method="post" action="/account/security/delete/confirm" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <input type="hidden" name="_twofa_csrf" value="<%= deleteChallenge.csrf %>">
+
+          <% if (deleteChallenge.method === 'email') { %>
+            <p class="muted">A six-digit verification code was sent to <span class="mono"><%= me.email %></span>.</p>
+          <% } else { %>
+            <p class="muted">Enter the six-digit code from your authenticator app.</p>
+          <% } %>
+
+          <label for="delete-code">Verification code</label>
+          <input type="text" id="delete-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+          <p><button class="btn danger small" type="submit">Permanently delete my account</button></p>
+        </form>
+
+        <form method="post" action="/account/security/delete/cancel" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn secondary small" type="submit">Cancel</button>
+        </form>
+      <% } else { %>
+        <form method="post" action="/account/security/delete/start" style="max-width:420px">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <label for="delete-password">Current password</label>
+          <input type="password" id="delete-password" name="password" autocomplete="current-password" required>
+          <div style="margin-top:1rem">
+            <%- include('partials/altcha-widget') %>
+          </div>
+          <p><button class="btn danger small" type="submit">Start account deletion</button></p>
+        </form>
+      <% } %>
+    </div>
   <% } %>
 </div>
 <%- include('partials/foot') %>

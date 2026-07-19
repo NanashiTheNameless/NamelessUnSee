@@ -19,7 +19,12 @@ function applyCookies(jar, res) {
   for (const c of sc) {
     const pair = c.split(';')[0];
     const i = pair.indexOf('=');
-    if (i > 0) jar.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
+    if (i > 0) {
+      const name = pair.slice(0, i).trim();
+      const value = pair.slice(i + 1).trim();
+      if (value === '') jar.delete(name);
+      else jar.set(name, value);
+    }
   }
 }
 
@@ -202,6 +207,15 @@ class TestResponse {
       if (opts.httpOnly !== false) parts.push('HttpOnly');
       if (opts.secure) parts.push('Secure');
       if (opts.sameSite) parts.push(`SameSite=${String(opts.sameSite).replace(/^[a-z]/, (m) => m.toUpperCase())}`);
+      this.append('Set-Cookie', parts.join('; '));
+      return this;
+    };
+    this.clearCookie = (name, opts = {}) => {
+      const parts = [`${name}=`];
+      const path = opts.path === false ? null : (opts.path || '/');
+      if (path) parts.push(`Path=${path}`);
+      parts.push('Max-Age=0');
+      parts.push('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
       this.append('Set-Cookie', parts.join('; '));
       return this;
     };

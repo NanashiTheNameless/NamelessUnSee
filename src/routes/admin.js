@@ -12,6 +12,7 @@ const storage = require('../storage');
 const notify = require('../notify');
 const { limiters } = require('../ratelimit');
 const { beneath } = require('../util/safe-path');
+const { deleteUserAccount } = require('../user-deletion');
 
 const router = express.Router();
 router.use(limiters.admin);
@@ -284,6 +285,24 @@ router.post('/admin/users/:id/unban', requireAdmin, verifyCsrf, (req, res) => {
     bans.removeMatching('user', u.id);
     audit.record(req.user, 'unban_user', `${u.username} (#${u.id})`);
   }
+  res.redirect('/admin/users');
+});
+
+router.post('/admin/users/:id/delete', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = getUser.get(req.params.id);
+  if (!u) return res.status(404).render('error', { title: 'Not found', message: 'No such user.' });
+  // Admins may delete non-admin accounts; only the owner may delete admins.
+  const allowed = u.id !== req.user.id && u.rank !== 'owner'
+    && (req.user.rank === 'owner' || u.role !== 'admin');
+  if (!allowed) {
+    return res.status(403).render('error', { title: 'Not allowed', message: 'You cannot delete this account.' });
+  }
+  try {
+    await deleteUserAccount(u);
+  } catch {
+    return res.status(500).render('error', { title: 'Delete error', message: 'One or more files could not be deleted.' });
+  }
+  audit.record(req.user, 'delete_user', `${u.username} <${u.email}> (#${u.id})`);
   res.redirect('/admin/users');
 });
 

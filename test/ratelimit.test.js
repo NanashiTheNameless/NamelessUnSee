@@ -6,12 +6,16 @@ const path = require('path');
 
 process.env.COOKIE_SECRET = 'test-' + 'x'.repeat(40);
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-rl-'));
+process.env.STORAGE_BACKEND = 'local';
 process.env.ALLOW_PRIVATE_IPS = 'true';
 process.env.TOR_LIST_ENABLED = 'false';
 process.env.VPN_LISTS_ENABLED = 'false';
 process.env.RATELIMIT_ENABLED = 'true';
 process.env.TWOFA_ENABLED = 'false';
 process.env.RL_LOGIN_MAX = '3';
+process.env.RESEND_API_KEY = ''; // never send real email from tests (a real key may sit in local .env)
+process.env.ADMIN_NOTIFY_FROM = '';
+process.env.ADMIN_NOTIFY_TO = '';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');

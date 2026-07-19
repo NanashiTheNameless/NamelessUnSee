@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS login_challenges (
   resend_count INTEGER NOT NULL DEFAULT 0,
   last_sent_at INTEGER,
   resend_blocked_until INTEGER
+  ,purpose    TEXT NOT NULL DEFAULT 'login' -- 'login' | 'account_delete'
 );
 
 CREATE TABLE IF NOT EXISTS recovery_challenges (
@@ -282,6 +283,7 @@ addColumn('login_challenges', 'next_url', "next_url TEXT NOT NULL DEFAULT '/dash
 addColumn('login_challenges', 'resend_count', 'resend_count INTEGER NOT NULL DEFAULT 0');
 addColumn('login_challenges', 'last_sent_at', 'last_sent_at INTEGER');
 addColumn('login_challenges', 'resend_blocked_until', 'resend_blocked_until INTEGER');
+addColumn('login_challenges', 'purpose', "purpose TEXT NOT NULL DEFAULT 'login'");
 addColumn('bans', 'expires_at', 'expires_at INTEGER');
 addColumn('images', 'phash', 'phash TEXT');
 addColumn('images', 'moderation_status', "moderation_status TEXT NOT NULL DEFAULT 'ok'");

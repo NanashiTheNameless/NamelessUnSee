@@ -3,6 +3,7 @@
 // Env must be set before requiring modules that read config.
 process.env.COOKIE_SECRET = 'test-' + 'x'.repeat(40);
 process.env.DATA_DIR = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'nus-unit-'));
+process.env.STORAGE_BACKEND = 'local';
 
 const { test } = require('node:test');
 const assert = require('node:assert');

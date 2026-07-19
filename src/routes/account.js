@@ -9,6 +9,8 @@ const { gatePage, widgetPage } = require('../middleware');
 const { verifySolution } = require('../altcha');
 const notify = require('../notify');
 const { newEmailCode, newTotpSecret, otpHash, provisioningUri, verifyTotp, matchingTotpCounter } = require('../twofa');
+const { deleteUserAccount } = require('../user-deletion');
+const audit = require('../audit');
 const bans = require('../bans');
 const geo = require('../geo');
 const { limiters } = require('../ratelimit');
@@ -22,8 +24,8 @@ const setLastIp = db.prepare('UPDATE users SET last_ip = ? WHERE id = ?');
 const countUsers = db.prepare('SELECT COUNT(*) AS n FROM users');
 const getUserById = db.prepare('SELECT * FROM users WHERE id = ?');
 const insertChallenge = db.prepare(
-  `INSERT INTO login_challenges (id, user_id, method, code_hash, csrf_token, next_url, created_at, expires_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  `INSERT INTO login_challenges (id, user_id, method, code_hash, csrf_token, next_url, created_at, expires_at, purpose)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 );
 const getChallenge = db.prepare('SELECT * FROM login_challenges WHERE id = ? AND expires_at > ?');
 const deleteChallenge = db.prepare('DELETE FROM login_challenges WHERE id = ?');
@@ -138,7 +140,7 @@ async function beginTwofa(res, user, nextUrl, method) {
   const csrf = randomToken(24);
   const now = Date.now();
   const code = method === 'email' ? newEmailCode() : null;
-  insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, nextUrl, now, now + config.twofa.challengeTtlMs);
+  insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, nextUrl, now, now + config.twofa.challengeTtlMs, 'login');
   res.cookie('twofa', id, {
     httpOnly: true,
     sameSite: 'lax',
@@ -154,6 +156,52 @@ async function beginTwofa(res, user, nextUrl, method) {
     return null;
   }
   return { csrf, method, next: nextUrl, email: user.email, error: null, resendWaitSeconds: method === 'email' ? RESEND_DELAYS[0] : 0 };
+}
+
+async function beginAccountDeletionTwofa(res, user, method) {
+  // Clear any existing 2FA cookie/challenge for this browser (defence-in-depth).
+  const existingId = res.req && res.req.signedCookies && res.req.signedCookies.twofa;
+  if (existingId) {
+    try { deleteChallenge.run(existingId); } catch { /* ignore */ }
+    clearTwofaCookie(res);
+  }
+
+  const id = randomToken(24);
+  const csrf = randomToken(24);
+  const now = Date.now();
+
+  // For deletion we do not use the “verify via email link” shortcut.
+  const code = method === 'email' ? newEmailCode() : null;
+  insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, '/account?tab=security', now, now + config.twofa.challengeTtlMs, 'account_delete');
+
+  res.cookie('twofa', id, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.secureCookies,
+    signed: true,
+    maxAge: config.twofa.challengeTtlMs,
+    path: '/',
+  });
+
+  if (method === 'email') {
+    const ok = await notify.sendAccountDeletionCode(user, code);
+    if (!ok) {
+      deleteChallenge.run(id);
+      clearTwofaCookie(res);
+      return null;
+    }
+  }
+  return { csrf, method };
+}
+
+function accountDeleteChallenge(req) {
+  const id = req.signedCookies && req.signedCookies.twofa;
+  const challenge = id ? getChallenge.get(id, Date.now()) : null;
+  if (!challenge) return null;
+  if (challenge.purpose !== 'account_delete') return null;
+  if (challenge.user_id !== req.user.id) return null;
+  if (challenge.attempts >= 5) return null;
+  return challenge;
 }
 
 // --- Sign up --------------------------------------------------------------
@@ -327,7 +375,13 @@ router.get('/login/2fa/email', (req, res) => {
   const challenge = challengeId && getChallenge.get(challengeId, Date.now());
   const token = typeof req.query.token === 'string' ? req.query.token : '';
   const user = challenge && getUserById.get(challenge.user_id);
-  const valid = challenge && user && challenge.method === 'email' && challenge.attempts < 5 && otpHash(token) === challenge.code_hash;
+  const valid =
+    challenge &&
+    user &&
+    challenge.purpose === 'login' &&
+    challenge.method === 'email' &&
+    challenge.attempts < 5 &&
+    otpHash(token) === challenge.code_hash;
   if (!valid) return res.status(403).render('login', { error: 'This verification link is invalid, expired, or belongs to another browser.', next: '/dashboard', values: {} });
   deleteChallenge.run(challenge.id);
   clearTwofaCookie(res);
@@ -341,7 +395,7 @@ router.post('/login/2fa/resend', limiters.login, widgetPage, async (req, res) =>
   const challengeId = req.signedCookies && req.signedCookies.twofa;
   const challenge = challengeId && getChallenge.get(challengeId, Date.now());
   const nextUrl = safeNext(req.body.next);
-  if (!challenge || challenge.method !== 'email' || req.body._csrf !== challenge.csrf_token) {
+  if (!challenge || challenge.purpose !== 'login' || challenge.method !== 'email' || req.body._csrf !== challenge.csrf_token) {
     clearTwofaCookie(res);
     return res.status(403).render('login', { error: 'Verification expired. Please log in again.', next: nextUrl, values: {} });
   }
@@ -408,7 +462,7 @@ router.post('/login/2fa', limiters.login, widgetPage, (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
   const challenge = challengeId && getChallenge.get(challengeId, Date.now());
   const nextUrl = safeNext(req.body.next);
-  if (!challenge || challenge.attempts >= 5 || req.body._csrf !== challenge.csrf_token) {
+  if (!challenge || challenge.purpose !== 'login' || challenge.attempts >= 5 || req.body._csrf !== challenge.csrf_token) {
     clearTwofaCookie(res);
     return res.status(403).render('login', { error: 'Verification expired. Please log in again.', next: nextUrl, values: {} });
   }
@@ -458,6 +512,7 @@ function renderAccount(res, user, extra = {}) {
     error: extra.error || null,
     notice: extra.notice || null,
     recovery: extra.recovery || null,
+    deleteChallenge: extra.deleteChallenge || null,
   });
 }
 
@@ -469,12 +524,22 @@ function accountRecovery(req, kind) {
 router.get('/account', requireAuth, (req, res) => {
   const tab = req.query.tab === 'security' ? 'security' : 'defaults';
   const challenge = tab === 'security' ? (accountRecovery(req, 'email') || accountRecovery(req, 'account_password')) : null;
-  renderAccount(res, req.user, { tab, recovery: challenge });
+  const del = tab === 'security' ? accountDeleteChallenge(req) : null;
+  renderAccount(res, req.user, {
+    tab,
+    recovery: challenge,
+    deleteChallenge: del ? { csrf: del.csrf_token, method: del.method } : null,
+  });
 });
 
 router.get('/account/security', requireAuth, (req, res) => {
   const challenge = accountRecovery(req, 'email') || accountRecovery(req, 'account_password');
-  renderAccount(res, req.user, { tab: 'security', recovery: challenge });
+  const del = accountDeleteChallenge(req);
+  renderAccount(res, req.user, {
+    tab: 'security',
+    recovery: challenge,
+    deleteChallenge: del ? { csrf: del.csrf_token, method: del.method } : null,
+  });
 });
 
 router.post('/account/defaults', requireAuth, verifyCsrf, (req, res) => {
@@ -577,6 +642,94 @@ router.post('/account/security/password/confirm', requireAuth, verifyCsrf, (req,
   deleteRecovery.run(challenge.id);
   clearRecoveryCookie(res);
   renderAccount(res, req.user, { tab: 'security', notice: 'Password updated.' });
+});
+
+// --- Account deletion ------------------------------------------------------
+router.post('/account/security/delete/start', requireAuth, widgetPage, verifyCsrf, limiters.login, async (req, res) => {
+  const password = req.body.password || '';
+  if (!verifySolution(req.body.altcha)) {
+    return renderAccount(res, req.user, { tab: 'security', error: 'Bot check failed. Please try again.' });
+  }
+  if (!verifyPassword(password, req.user.password_hash)) {
+    return renderAccount(res, req.user, { tab: 'security', error: 'Current password is incorrect.' });
+  }
+  if (!config.twofa.enabled) {
+    return renderAccount(res, req.user, { tab: 'security', error: 'Account deletion requires 2FA to be enabled on this instance.' });
+  }
+
+  const method = req.user.totp_enabled ? 'totp' : 'email';
+  const challenge = await beginAccountDeletionTwofa(res, req.user, method);
+  if (!challenge) {
+    return renderAccount(res, req.user, { tab: 'security', error: 'Verification email is temporarily unavailable. Please try again later.' });
+  }
+  return renderAccount(res, req.user, {
+    tab: 'security',
+    deleteChallenge: { csrf: challenge.csrf, method: challenge.method },
+    notice: method === 'email' ? 'A verification code was sent to your email address.' : 'Enter your authenticator code to confirm deletion.'
+  });
+});
+
+router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiters.login, async (req, res) => {
+  const challengeId = req.signedCookies && req.signedCookies.twofa;
+  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+
+  // Validate the deletion challenge.
+  if (
+    !challenge ||
+    challenge.purpose !== 'account_delete' ||
+    challenge.user_id !== req.user.id ||
+    challenge.attempts >= 5 ||
+    req.body._twofa_csrf !== challenge.csrf_token
+  ) {
+    clearTwofaCookie(res);
+    if (challenge) deleteChallenge.run(challenge.id);
+    return renderAccount(res, req.user, { tab: 'security', error: 'Deletion verification expired. Please start again.' });
+  }
+
+  const user = getUserById.get(req.user.id);
+  let valid = false;
+  let totpCounter = null;
+  if (user && challenge.method === 'email') valid = otpHash(req.body.code || '') === challenge.code_hash;
+  if (user && challenge.method === 'totp' && user.totp_enabled) {
+    totpCounter = matchingTotpCounter(user.totp_secret, req.body.code);
+    valid = totpCounter !== null && (user.totp_last_counter === null || totpCounter > user.totp_last_counter);
+  }
+
+  if (!valid) {
+    incrementChallengeAttempts.run(challenge.id);
+    return renderAccount(res, req.user, {
+      tab: 'security',
+      deleteChallenge: { csrf: challenge.csrf_token, method: challenge.method },
+      error: 'Invalid verification code.',
+    });
+  }
+
+  try {
+    audit.record(req.user, 'delete_own_account', `${req.user.username} <${req.user.email}> (#${req.user.id})`);
+    await deleteUserAccount(req.user);
+  } catch (err) {
+    audit.record(req.user, 'delete_own_account_failed', (err && err.message) ? err.message : 'unknown error');
+    clearTwofaCookie(res);
+    try { deleteChallenge.run(challenge.id); } catch {}
+    return renderAccount(res, req.user, { tab: 'security', error: 'Account deletion failed. Please try again, and contact the administrator if this continues.' });
+  }
+
+  // Success: delete the account.
+  deleteChallenge.run(challenge.id);
+  clearTwofaCookie(res);
+  if (challenge.method === 'totp') updateTotpCounter.run(totpCounter, user.id);
+  destroySession(req, res);
+  return res.redirect('/?deleted=1');
+});
+
+router.post('/account/security/delete/cancel', requireAuth, verifyCsrf, (req, res) => {
+  const challengeId = req.signedCookies && req.signedCookies.twofa;
+  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  if (challenge && challenge.purpose === 'account_delete' && challenge.user_id === req.user.id) {
+    deleteChallenge.run(challenge.id);
+  }
+  clearTwofaCookie(res);
+  renderAccount(res, req.user, { tab: 'security', notice: 'Account deletion cancelled.' });
 });
 
 // --- Log out --------------------------------------------------------------

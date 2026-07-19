@@ -242,6 +242,47 @@ async function sendLoginCode(user, code, link) {
   }
 }
 
+async function sendAccountDeletionCode(user, code) {
+  const { apiKey } = config.resend;
+  const from = cleanFrom(config.resend.from);
+  if (!apiKey || !from) {
+    if (config.twofa.consoleFallback) {
+      console.log(`[NamelessUnSee] Account deletion code for ${user.email}: ${code}`);
+      return true;
+    }
+    console.warn('[NamelessUnSee] Account deletion email unavailable: configure RESEND_API_KEY and ADMIN_NOTIFY_FROM.');
+    return false;
+  }
+
+  try {
+    const minutes = Math.round(config.twofa.challengeTtlMs / 60000);
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [user.email],
+        subject: 'NamelessUnSee account deletion verification code',
+        text: [
+          `Your NamelessUnSee account deletion verification code is ${code}.`,
+          '',
+          `This code expires in ${minutes} minutes. If you did not request this, you can ignore this email.`,
+        ].join('\n'),
+        html: `<p>Your NamelessUnSee account deletion verification code is <strong>${escapeHtml(code)}</strong>.</p>` +
+          `<p>This code expires in ${escapeHtml(minutes)} minutes. If you did not request this, you can ignore this email.</p>`,
+      }),
+    });
+    if (!res.ok) {
+      console.warn('[NamelessUnSee] Resend account deletion email failed:', res.status, await res.text());
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[NamelessUnSee] Resend account deletion email error:', err.message);
+    return false;
+  }
+}
+
 async function sendRecoveryCode(user, code, purpose) {
   const { apiKey } = config.resend;
   const from = cleanFrom(config.resend.from);
@@ -302,4 +343,13 @@ async function sendForgottenValue(user, label, value) {
   }
 }
 
-module.exports = { notifyPendingSignup, notifyAdminFlag, notifyAdminReport, sendSignupStatus, sendLoginCode, sendRecoveryCode, sendForgottenValue };
+module.exports = {
+  notifyPendingSignup,
+  notifyAdminFlag,
+  notifyAdminReport,
+  sendSignupStatus,
+  sendLoginCode,
+  sendAccountDeletionCode,
+  sendRecoveryCode,
+  sendForgottenValue,
+};

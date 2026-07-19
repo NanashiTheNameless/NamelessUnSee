@@ -9,6 +9,7 @@ const crypto = require('crypto');
 process.env.COOKIE_SECRET = 'test-' + 'x'.repeat(40);
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-e2e-'));
 process.env.ALLOW_PRIVATE_IPS = 'true';
+process.env.STORAGE_BACKEND = 'local';
 process.env.TOR_LIST_ENABLED = 'false';
 process.env.VPN_LISTS_ENABLED = 'false';
 process.env.MAXMIND_LICENSE_KEY = '';
@@ -18,6 +19,9 @@ process.env.SECURE_COOKIES = 'false';
 process.env.NSFW_CLASSIFIER_ENABLED = 'false'; // no external model in CI
 process.env.TWOFA_ENABLED = 'false'; // dedicated 2FA coverage lives in test/twofa.test.js
 process.env.OPERATOR_CONTACT = 'operator@test.example'; // exercises the obfuscated-contact path
+process.env.RESEND_API_KEY = ''; // never send real email from tests (a real key may sit in local .env)
+process.env.ADMIN_NOTIFY_FROM = '';
+process.env.ADMIN_NOTIFY_TO = '';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -123,7 +127,7 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
 
   // First signup -> auto-approved regular user, logged in
   const sol = await solveAltcha(req);
-  r = await req('/signup', form({ email: 'first@example.com', username: 'firstuser', password: 'password1234', altcha: sol }));
+  r = await req('/signup', form({ email: 'first@example.invalid', username: 'firstuser', password: 'password1234', altcha: sol }));
   assert.equal(r.status, 302, 'first signup redirects');
   assert.ok(jar.has('sid'), 'first user logged in');
   // ...and is NOT an admin
@@ -268,7 +272,7 @@ test('admin: seed via DB, ban (view) blocks service-wide, audit recorded', async
   db.prepare(
     `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at)
      VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?)`
-  ).run(uuidv7(now), 'admin@example.com', 'adminx', hashPassword('adminpass1234'), now, now);
+  ).run(uuidv7(now), 'admin@example.invalid', 'adminx', hashPassword('adminpass1234'), now, now);
 
   const jar = newJar();
   const req = makeReq(app, jar);
@@ -389,4 +393,50 @@ test('recipient links: labelled, one-time with replay-safe counting, revocable',
   const sam = db.prepare("SELECT * FROM view_links WHERE image_id = ? AND label = 'Sam'").get(img.id);
   await req(`/dashboard/i/${img.token}/links/${sam.id}/revoke`, form({ _csrf: csrfFrom(lh) }));
   assert.equal((await req(`/i/${img.token}?r=${sam.token}`)).status, 410, 'revoked link rejected');
+});
+
+test('admin: delete user (admins delete non-admins, owner deletes admins, owner/self protected)', async () => {
+  const now = Date.now();
+  const seed = db.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, rank, status, created_at, approved_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, ?)`
+  );
+  const victimId = uuidv7(now);
+  const admin2Id = uuidv7(now);
+  const ownerId = uuidv7(now);
+  seed.run(victimId, 'victim@example.invalid', 'victim', hashPassword('victimpass1234'), 'user', 'user', now, now);
+  seed.run(admin2Id, 'admin2@example.invalid', 'admin2', hashPassword('adminpass1234'), 'admin', 'user', now, now);
+  seed.run(ownerId, 'boss@example.invalid', 'bigboss', hashPassword('ownerpass1234'), 'admin', 'owner', now, now);
+
+  const adminxId = db.prepare("SELECT id FROM users WHERE username = 'adminx'").get().id;
+
+  const login = async (identifier, password) => {
+    const jar = newJar();
+    const req = makeReq(app, jar);
+    await consent(req, '/');
+    const altcha = await solveAltcha(req);
+    await req('/login', form({ identifier, password, altcha, next: '/dashboard' }));
+    return req;
+  };
+
+  // Plain admin: may delete a normal user...
+  const adminReq = await login('adminx', 'adminpass1234');
+  const csrf = csrfFrom(await (await adminReq('/admin/users')).text());
+  assert.equal((await adminReq('/admin/users/' + victimId + '/delete', form({ _csrf: csrf }))).status, 302);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users WHERE id = ?').get(victimId).n, 0, 'victim removed');
+
+  // ...but not another admin, themselves, or the owner.
+  assert.equal((await adminReq('/admin/users/' + admin2Id + '/delete', form({ _csrf: csrf }))).status, 403, 'admin cannot delete admin');
+  assert.equal((await adminReq('/admin/users/' + adminxId + '/delete', form({ _csrf: csrf }))).status, 403, 'cannot delete self');
+  assert.equal((await adminReq('/admin/users/' + ownerId + '/delete', form({ _csrf: csrf }))).status, 403, 'cannot delete owner');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users WHERE id IN (?, ?, ?)').get(admin2Id, adminxId, ownerId).n, 3);
+
+  // Owner: may delete an admin, even one with audit-log entries and bans
+  // pointing at them (adminx recorded audit rows and created bans earlier).
+  const ownerReq = await login('bigboss', 'ownerpass1234');
+  const ocsrf = csrfFrom(await (await ownerReq('/admin/users')).text());
+  assert.equal((await ownerReq('/admin/users/' + adminxId + '/delete', form({ _csrf: ocsrf }))).status, 302);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM users WHERE id = ?').get(adminxId).n, 0, 'admin removed by owner');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(adminxId).n, 0, 'sessions cascade');
+  assert.ok(db.prepare("SELECT COUNT(*) AS n FROM audit_log WHERE action = 'delete_user'").get().n >= 2, 'deletions audited');
 });

@@ -6,6 +6,7 @@ const path = require('path');
 
 process.env.COOKIE_SECRET = 'test-' + 'x'.repeat(40);
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-mod-'));
+process.env.STORAGE_BACKEND = 'local';
 process.env.ALLOW_PRIVATE_IPS = 'true';
 process.env.TOR_LIST_ENABLED = 'false';
 process.env.VPN_LISTS_ENABLED = 'false';
@@ -15,6 +16,9 @@ process.env.MODERATION_ENABLED = 'true';
 process.env.NSFW_CLASSIFIER_ENABLED = 'true';
 process.env.MODERATION_HOLD_ON_REVIEW = 'true';
 process.env.TWOFA_ENABLED = 'false';
+process.env.RESEND_API_KEY = ''; // never send real email from tests (a real key may sit in local .env)
+process.env.ADMIN_NOTIFY_FROM = '';
+process.env.ADMIN_NOTIFY_TO = '';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
@@ -34,11 +38,11 @@ before(() => {
   db.prepare(
     `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at)
      VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?)`
-  ).run(uuidv7(now), 'admin@x.co', 'adminm', hashPassword('adminpass1234'), now, now);
+  ).run(uuidv7(now), 'admin@test.invalid', 'adminm', hashPassword('adminpass1234'), now, now);
   db.prepare(
     `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at)
      VALUES (?, ?, ?, ?, 'user', 'approved', ?, ?)`
-  ).run(uuidv7(now), 'user@x.co', 'userm', hashPassword('userpass1234'), now, now);
+  ).run(uuidv7(now), 'user@test.invalid', 'userm', hashPassword('userpass1234'), now, now);
 
 });
 

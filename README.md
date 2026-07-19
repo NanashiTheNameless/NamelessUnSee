@@ -142,7 +142,7 @@ signup is pending until an admin approves it. **Owners/admins are only ever
 created via the CLI:**
 
 ```bash
-corepack yarn create-admin you@example.com yourname "your-strong-password"
+corepack yarn create-admin you@example.invalid yourname "your-strong-password"
 ```
 
 This creates an approved Owner with admin access. Existing accounts can be made
@@ -152,8 +152,8 @@ With Docker Compose, run these inside the app container so they use the live
 SQLite database mounted at `/app/data`:
 
 ```bash
-docker compose exec app corepack yarn create-admin you@example.com yourname "your-strong-password"
-docker compose exec app corepack yarn set-owner you@example.com
+docker compose exec app corepack yarn create-admin you@example.invalid yourname "your-strong-password"
+docker compose exec app corepack yarn set-owner you@example.invalid
 ```
 
 ## Deploy with Docker + Cloudflare Tunnel
@@ -161,14 +161,14 @@ docker compose exec app corepack yarn set-owner you@example.com
 1. In the Cloudflare **Zero Trust** dashboard → **Networks → Tunnels**, create a
    tunnel with the *Cloudflared* connector and copy its **token**.
 2. Add a **Public Hostname** to that tunnel pointing your domain
-   (e.g. `unsee.example.com`) at the service URL `http://app:3000`.
+   (e.g. `unsee.example.invalid`) at the service URL `http://app:3000`.
    Do not use `http://localhost:3000`: inside cloudflared, `localhost` refers
    to the cloudflared container, not the app container.
 3. Configure and launch:
 
    ```bash
    cp .env.example .env
-   # set COOKIE_SECRET, BASE_URL=https://unsee.example.com,
+   # set COOKIE_SECRET, BASE_URL=https://unsee.example.invalid,
    #     SECURE_COOKIES=true, and TUNNEL_TOKEN=<your tunnel token>
    docker compose pull
    docker compose up -d

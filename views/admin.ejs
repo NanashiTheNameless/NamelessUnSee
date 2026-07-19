@@ -145,7 +145,13 @@
                   </form>
                 <% } %>
               </div>
-            <% } else { %><span class="muted">-</span><% } %>
+            <% } %>
+            <% if (u.id !== me.id && u.rank !== 'owner' && (me.rank === 'owner' || u.role !== 'admin')) { %>
+              <form method="post" action="/admin/users/<%= u.id %>/delete" style="margin-top:.35rem" onsubmit="return confirm('Permanently delete this account and all its files? This cannot be undone.')">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <button class="btn danger small" type="submit">Delete account</button>
+              </form>
+            <% } %>
           </td>
         </tr>
       <% }); %>
@@ -167,7 +173,7 @@
         <option value="email">Email</option>
         <option value="user">User id</option>
       </select>
-      <label>Value <span class="muted">(e.g. 203.0.113.4, 203.0.113.0/24, user@example.com, or a user id)</span></label>
+      <label>Value <span class="muted">(e.g. 203.0.113.4, 203.0.113.0/24, user@example.invalid, or a user id)</span></label>
       <input type="text" name="value" required>
       <div style="display:flex; gap:1.2rem; margin:.3rem 0">
         <label class="muted" style="margin:0; font-weight:400"><input type="checkbox" name="block_view" value="1" checked style="width:auto;height:auto"> Block viewing</label>
