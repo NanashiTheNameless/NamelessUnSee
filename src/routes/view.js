@@ -316,10 +316,14 @@ router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, 
   const client = {};
   const keys = [
     'screenW', 'screenH', 'availW', 'availH', 'viewportW', 'viewportH',
-    'colorDepth', 'pixelRatio', 'timezone', 'timezoneOffset', 'languages',
+    'colorDepth', 'pixelDepth', 'pixelRatio', 'screenOrientation', 'isExtended',
+    'timezone', 'timezoneOffset', 'languages', 'locale',
     'platform', 'hardwareConcurrency', 'deviceMemory', 'maxTouchPoints',
-    'cookieEnabled', 'doNotTrack', 'referrer', 'connection',
-    'userAgentData', 'webgl', 'battery', 'mediaCapabilities', 'fontFeatures',
+    'vendor', 'product', 'appVersion', 'webdriver', 'pdfViewerEnabled',
+    'plugins', 'mimeTypes', 'cookieEnabled', 'doNotTrack', 'globalPrivacyControl',
+    'onLine', 'referrer', 'connection', 'displayPreferences', 'storage',
+    'performance', 'capabilities', 'userAgentData', 'webgl',
+    'battery', 'mediaCapabilities', 'fontFeatures',
   ];
   const bounded = (value, depth = 0) => {
     if (typeof value === 'string') return value.slice(0, 300);

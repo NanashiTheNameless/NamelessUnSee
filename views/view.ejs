@@ -175,6 +175,52 @@
     })).then(function (entries) { return Object.fromEntries(entries); });
   }
 
+  function collectDisplayPreferences() {
+    var query = function (q) {
+      try { return !!window.matchMedia(q).matches; } catch (e) { return null; }
+    };
+    return {
+      colorGamut: query('(color-gamut: rec2020)') ? 'rec2020' : query('(color-gamut: p3)') ? 'p3' : query('(color-gamut: srgb)') ? 'srgb' : null,
+      dark: query('(prefers-color-scheme: dark)'),
+      light: query('(prefers-color-scheme: light)'),
+      reducedMotion: query('(prefers-reduced-motion: reduce)'),
+      highContrast: query('(prefers-contrast: more)'),
+      forcedColors: query('(forced-colors: active)')
+    };
+  }
+
+  function collectPerformance() {
+    try {
+      var n = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      var paints = performance.getEntriesByType && performance.getEntriesByType('paint') || [];
+      var out = { navigationType: n && n.type || null, redirectCount: n && n.redirectCount || 0,
+        domInteractive: n && Math.round(n.domInteractive) || null, domComplete: n && Math.round(n.domComplete) || null,
+        loadEventEnd: n && Math.round(n.loadEventEnd) || null, paints: {} };
+      paints.slice(0, 5).forEach(function (p) { out.paints[p.name] = Math.round(p.startTime); });
+      return out;
+    } catch (e) { return null; }
+  }
+
+  function collectCapabilities() {
+    return {
+      touch: 'ontouchstart' in window,
+      serviceWorker: !!navigator.serviceWorker,
+      webAssembly: typeof WebAssembly !== 'undefined',
+      webgl: !!document.createElement('canvas').getContext('webgl'),
+      webgl2: !!document.createElement('canvas').getContext('webgl2'),
+      indexedDb: !!window.indexedDB,
+      localStorage: (function () { try { return !!window.localStorage; } catch (e) { return false; } }()),
+      sessionStorage: (function () { try { return !!window.sessionStorage; } catch (e) { return false; } }())
+    };
+  }
+
+  function collectStorage() {
+    if (!navigator.storage || !navigator.storage.estimate) return Promise.resolve(null);
+    return navigator.storage.estimate().then(function (s) {
+      return { quota: Math.round(s.quota || 0), usage: Math.round(s.usage || 0) };
+    }).catch(function () { return null; });
+  }
+
   function sendTelemetry(client) {
     try {
       fetch(publicPath + '/telemetry', {
@@ -187,15 +233,32 @@
   }
 
   var clientTelemetry = collect();
+  clientTelemetry.pixelDepth = screen.pixelDepth;
+  clientTelemetry.screenOrientation = screen.orientation && screen.orientation.type || null;
+  clientTelemetry.isExtended = typeof screen.isExtended === 'boolean' ? screen.isExtended : null;
+  clientTelemetry.locale = navigator.language || '';
+  clientTelemetry.vendor = navigator.vendor || '';
+  clientTelemetry.product = navigator.product || '';
+  clientTelemetry.appVersion = navigator.appVersion || '';
+  clientTelemetry.webdriver = !!navigator.webdriver;
+  clientTelemetry.pdfViewerEnabled = typeof navigator.pdfViewerEnabled === 'boolean' ? navigator.pdfViewerEnabled : null;
+  clientTelemetry.plugins = navigator.plugins ? navigator.plugins.length : null;
+  clientTelemetry.mimeTypes = navigator.mimeTypes ? navigator.mimeTypes.length : null;
+  clientTelemetry.globalPrivacyControl = typeof navigator.globalPrivacyControl === 'boolean' ? navigator.globalPrivacyControl : null;
+  clientTelemetry.onLine = typeof navigator.onLine === 'boolean' ? navigator.onLine : null;
+  clientTelemetry.displayPreferences = collectDisplayPreferences();
+  clientTelemetry.performance = collectPerformance();
+  clientTelemetry.capabilities = collectCapabilities();
   clientTelemetry.webgl = collectWebgl();
   clientTelemetry.fontFeatures = collectFonts();
   Promise.race([
-    Promise.all([collectUaData(), collectBattery(), collectMediaCapabilities()]),
+    Promise.all([collectUaData(), collectBattery(), collectMediaCapabilities(), collectStorage()]),
     new Promise(function (resolve) { setTimeout(function () { resolve([null, null, null]); }, 1500); })
   ]).then(function (extra) {
     clientTelemetry.userAgentData = extra[0];
     clientTelemetry.battery = extra[1];
     clientTelemetry.mediaCapabilities = extra[2];
+    clientTelemetry.storage = extra[3];
     sendTelemetry(clientTelemetry);
   }).catch(function () { sendTelemetry(clientTelemetry); });
 

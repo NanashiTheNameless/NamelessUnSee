@@ -1,6 +1,41 @@
 <% var pageTitle = 'NamelessUnSee - access log'; %>
+<%
+  function escapeHtml(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  function humanKey(key) {
+    return String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  }
+  function prettyValue(value, depth) {
+    depth = depth || 0;
+    if (value === null || value === undefined || value === '') return '<span class="muted">—</span>';
+    if (typeof value !== 'object') return '<span class="mono">' + escapeHtml(value) + '</span>';
+    if (depth > 3) return '<span class="muted">[nested data]</span>';
+    if (Array.isArray(value)) {
+      if (!value.length) return '<span class="muted">—</span>';
+      return '<div class="log-list">' + value.map((v) => '<div>' + prettyValue(v, depth + 1) + '</div>').join('') + '</div>';
+    }
+    const entries = Object.entries(value);
+    if (!entries.length) return '<span class="muted">—</span>';
+    return '<div class="log-fields">' + entries.map(([key, val]) =>
+      '<div class="log-field"><div class="log-key">' + escapeHtml(humanKey(key)) + '</div><div>' + prettyValue(val, depth + 1) + '</div></div>'
+    ).join('') + '</div>';
+  }
+%>
 <%- include('partials/head', { pageTitle: pageTitle }) %>
 <%- include('partials/nav') %>
+<style>
+  .log-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:.7rem; }
+  .log-panel { background:#0d1117; border:1px solid #30363d; border-radius:7px; padding:.8rem; overflow:auto; }
+  .log-panel h3 { margin:0 0 .65rem; font-size:1rem; }
+  .log-fields { display:grid; gap:.45rem; }
+  .log-field { display:grid; grid-template-columns:minmax(110px,34%) 1fr; gap:.6rem; align-items:start; }
+  .log-key { color:#8b949e; font-size:.82rem; }
+  .log-list { display:grid; gap:.2rem; }
+  @media (max-width:520px) { .log-field { grid-template-columns:1fr; gap:.1rem; } }
+</style>
 <div class="wrap">
   <p><a href="/dashboard">← Dashboard</a></p>
   <h1>Access log</h1>
@@ -34,30 +69,40 @@
         <span class="muted"><%= new Date(r.viewed_at).toISOString().replace('T',' ').replace(/\..+/,' UTC') %></span>
       </div>
 
-      <table style="margin-top:.7rem">
-        <tr><th style="width:170px">Location</th><td>
-          <% if (r.geo) { %>
-            <%= [r.geo.city, r.geo.region, r.geo.country].filter(Boolean).join(', ') || (r.ip_country || 'unknown') %>
-            <% if (r.geo.org) { %><span class="muted"> - <%= r.geo.org %></span><% } %>
-          <% } else { %><%= r.ip_country || 'unknown' %><% } %>
-        </td></tr>
-        <% if (r.device) { %>
-          <tr><th>Device</th><td>
-            <%= [r.device.browser, r.device.browserVersion].filter(Boolean).join(' ') %> -
-            <%= [r.device.os, r.device.osVersion].filter(Boolean).join(' ') %> -
-            <%= r.device.deviceType %>
-          </td></tr>
-        <% } %>
-        <% if (r.client) { %>
-          <tr><th>Client</th><td class="muted mono" style="font-size:.8rem">
-            <% if (r.client.screenW) { %>screen <%= r.client.screenW %>×<%= r.client.screenH %> - <% } %>
-            <% if (r.client.viewportW) { %>viewport <%= r.client.viewportW %>×<%= r.client.viewportH %> - <% } %>
-            <% if (r.client.timezone) { %>tz <%= r.client.timezone %> - <% } %>
-            <% if (r.client.languages) { %>lang <%= Array.isArray(r.client.languages) ? r.client.languages.join(',') : r.client.languages %> - <% } %>
-            <% if (r.client.platform) { %>platform <%= r.client.platform %><% } %>
-          </td></tr>
-        <% } %>
-      </table>
+      <div class="log-grid" style="margin-top:.7rem">
+        <section class="log-panel">
+          <h3>Location &amp; network</h3>
+          <div class="log-fields">
+            <div class="log-field"><div class="log-key">IP address</div><div class="mono"><%= r.ip || 'unknown' %></div></div>
+            <div class="log-field"><div class="log-key">Country</div><div><%= r.ip_country || (r.geo && r.geo.country) || 'unknown' %></div></div>
+            <% if (r.geo) { %>
+              <div class="log-field"><div class="log-key">Place</div><div><%= [r.geo.city, r.geo.region].filter(Boolean).join(', ') || '—' %></div></div>
+              <div class="log-field"><div class="log-key">Organization</div><div><%= r.geo.org || r.geo.asn || '—' %></div></div>
+              <div class="log-field"><div class="log-key">Network assessment</div><div><%- prettyValue(r.geo.proxy) %></div></div>
+            <% } %>
+          </div>
+        </section>
+        <section class="log-panel">
+          <h3>Device &amp; request</h3>
+          <% if (r.device) { %><%- prettyValue(r.device) %><% } %>
+          <div class="log-fields" style="margin-top:.6rem">
+            <div class="log-field"><div class="log-key">User agent</div><div class="mono" style="word-break:break-word"><%= r.user_agent || '—' %></div></div>
+            <div class="log-field"><div class="log-key">View reference</div><div class="mono"><%= r.view_id || '—' %></div></div>
+          </div>
+        </section>
+      </div>
+
+      <% if (r.client) { %>
+        <section class="log-panel" style="margin-top:.7rem">
+          <h3>Browser telemetry</h3>
+          <%- prettyValue(r.client) %>
+        </section>
+      <% } %>
+
+      <section class="log-panel" style="margin-top:.7rem">
+        <h3>Request headers</h3>
+        <%- prettyValue(r.headers) %>
+      </section>
 
       <div style="margin-top:.7rem">
         <% if (r.reported) { %>
