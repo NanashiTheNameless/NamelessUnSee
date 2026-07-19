@@ -123,6 +123,7 @@ const config = {
     // HMAC key for signing ALTCHA challenges. Falls back to a value derived
     // from COOKIE_SECRET so it works out of the box.
     hmacKey: process.env.ALTCHA_HMAC_KEY || null,
+    // Proof-of-work search ceiling. Higher values increase client CPU cost.
     maxNumber: int(process.env.ALTCHA_MAX_NUMBER, 200000),
     widget: {
       type: process.env.ALTCHA_WIDGET_TYPE || 'checkbox',
@@ -214,6 +215,13 @@ if (!config.altcha.hmacKey) {
     .createHash('sha256')
     .update('altcha:' + config.cookieSecret)
     .digest('hex');
+}
+
+if (process.env.NODE_ENV === 'production' && !process.env.ALTCHA_HMAC_KEY) {
+  console.warn(
+    '[NamelessUnSee] WARNING: ALTCHA_HMAC_KEY is unset. Using a key derived from COOKIE_SECRET. ' +
+      'Set a separate persistent ALTCHA_HMAC_KEY in production.'
+  );
 }
 
 // Ensure data directories exist.

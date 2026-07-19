@@ -9,7 +9,7 @@ const config = require('./config');
 
 const HMAC_KEY = config.altcha.hmacKey;
 const MAX_NUMBER = config.altcha.maxNumber;
-const ALGO = 'SHA-256';
+const ALGO = 'SHA-512';
 const CHALLENGE_TTL_MS = 10 * 60 * 1000;
 
 // Replay prevention: remember solved challenges until they expire.
