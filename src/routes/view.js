@@ -61,7 +61,7 @@ function isViewable(img) {
 }
 
 function loadImage(req, res) {
-  const img = getLive.get(req.params.token);
+  const img = getLive.get(req.imageToken || req.params.token);
   if (!img) {
     res.status(404);
     return null;
@@ -87,6 +87,11 @@ function sanitizeViewId(v) {
 
 // --- per-recipient links ----------------------------------------------------
 const getLink = db.prepare('SELECT * FROM view_links WHERE token = ? AND image_id = ?');
+const getLinkImage = db.prepare(
+  `SELECT vl.*, i.token AS image_token
+   FROM view_links vl JOIN images i ON i.id = vl.image_id
+   WHERE vl.token = ?`
+);
 const consumeLink = db.prepare(
   `UPDATE view_links SET use_count = use_count + 1
    WHERE id = ? AND revoked_at IS NULL AND (max_uses IS NULL OR use_count < max_uses)`
@@ -99,6 +104,13 @@ const consumeLink = db.prepare(
 //                                   for replays of an already-counted view
 //   { link }                        valid and usable
 function resolveLink(req, img) {
+  if (req.recipientLink) {
+    if (req.recipientLink.image_id !== img.id || req.recipientLink.revoked_at) return { invalid: true };
+    if (req.recipientLink.max_uses && req.recipientLink.use_count >= req.recipientLink.max_uses) {
+      return { link: req.recipientLink, exhausted: true };
+    }
+    return { link: req.recipientLink };
+  }
   const raw = req.query.r !== undefined ? req.query.r : (req.body && req.body.r);
   if (raw === undefined || raw === '') return { link: null };
   if (typeof raw !== 'string' || !/^[A-Za-z0-9_-]{10,64}$/.test(raw)) return { invalid: true };
@@ -107,6 +119,16 @@ function resolveLink(req, img) {
   if (link.max_uses && link.use_count >= link.max_uses) return { link, exhausted: true };
   return { link };
 }
+
+// Recipient URLs intentionally contain only the recipient token.
+router.use('/r/:token', (req, res, next) => {
+  const link = getLinkImage.get(req.params.token);
+  if (!link || link.revoked_at) return linkGone(res);
+  req.recipientLink = link;
+  req.imageToken = link.image_token;
+  req.publicToken = req.params.token;
+  next();
+});
 
 function linkGone(res) {
   return res.status(410).render('error', {
@@ -129,7 +151,7 @@ function blockMessage(reason) {
 }
 
 // --- Consent-gated view page ---------------------------------------------
-router.get('/i/:token', limiters.view, requireConsent, withScriptNonce, async (req, res) => {
+router.get(['/i/:token', '/r/:token'], limiters.view, requireConsent, withScriptNonce, async (req, res) => {
   const img = loadImage(req, res);
   if (!img) {
     return res.render('view-gone', { expired: !!res.locals._expired });
@@ -148,6 +170,7 @@ router.get('/i/:token', limiters.view, requireConsent, withScriptNonce, async (r
   res.render('view', {
     token: img.token,
     linkToken: link ? link.token : null,
+    publicPath: req.publicToken ? `/r/${encodeURIComponent(req.publicToken)}` : `/i/${encodeURIComponent(img.token)}`,
     title: img.title,
     width: img.width,
     height: img.height,
@@ -158,7 +181,7 @@ router.get('/i/:token', limiters.view, requireConsent, withScriptNonce, async (r
   });
 });
 
-router.post('/i/:token/view-check', limiters.view, requireConsent, (req, res) => {
+router.post(['/i/:token/view-check', '/r/:token/view-check'], limiters.view, requireConsent, (req, res) => {
   const img = loadImage(req, res);
   if (!img) return res.status(res.statusCode === 410 ? 410 : 404).end();
   const { link, invalid, exhausted } = resolveLink(req, img);
@@ -170,14 +193,15 @@ router.post('/i/:token/view-check', limiters.view, requireConsent, (req, res) =>
     secure: config.secureCookies,
     signed: true,
     maxAge: 10 * 60 * 1000,
-    path: `/i/${img.token}`,
+    path: req.publicToken ? `/r/${req.publicToken}` : `/i/${img.token}`,
   });
-  const linkParam = link ? '&r=' + encodeURIComponent(link.token) : '';
-  res.redirect(`/i/${encodeURIComponent(img.token)}?gate=1${linkParam}`);
+  const publicPath = req.publicToken ? `/r/${encodeURIComponent(req.publicToken)}` : `/i/${encodeURIComponent(img.token)}`;
+  const linkParam = req.publicToken ? '' : (link ? '&r=' + encodeURIComponent(link.token) : '');
+  res.redirect(`${publicPath}?gate=1${linkParam}`);
 });
 
 // --- Per-viewer watermarked render (the ONLY image bytes ever served) ------
-router.get(['/i/:token/render.png', '/i/:token/render.mp4'], limiters.render, requireConsent, async (req, res) => {
+router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.png', '/r/:token/render.mp4'], limiters.render, requireConsent, async (req, res) => {
   const img = loadImage(req, res);
   if (!img) return res.status(res.statusCode === 410 ? 410 : 404).end();
   if (!req.signedCookies || req.signedCookies[VIEW_GATE_COOKIE] !== img.token) {
@@ -283,8 +307,8 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4'], limiters.render, re
 });
 
 // --- Client-side telemetry beacon -----------------------------------------
-router.post('/i/:token/telemetry', limiters.telemetry, requireConsent, (req, res) => {
-  const img = getLive.get(req.params.token);
+router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, requireConsent, (req, res) => {
+  const img = getLive.get(req.imageToken || req.params.token);
   if (!img) return res.status(204).end();
   const viewId = sanitizeViewId(req.body && req.body.viewId);
 

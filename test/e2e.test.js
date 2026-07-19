@@ -362,12 +362,19 @@ test('recipient links: labelled, one-time with replay-safe counting, revocable',
   const link = db.prepare('SELECT * FROM view_links WHERE image_id = ?').get(img.id);
   assert.equal(link.max_uses, 1);
   assert.equal(link.label, 'Alex');
+  const recipientUrl = `/r/${link.token}`;
+  assert.ok(!recipientUrl.includes(img.token), 'recipient URL does not expose the primary image token');
 
   // View + render through the link.
-  assert.equal((await req(`/i/${img.token}?r=${link.token}`)).status, 200);
-  await req(`/i/${img.token}/view-check`, form({ altcha: await solveAltcha(req), r: link.token }));
+  r = await req(recipientUrl);
+  assert.equal(r.status, 200);
+  const recipientHtml = await r.text();
+  assert.ok(recipientHtml.includes(`/r/${link.token}`));
+  assert.ok(!recipientHtml.includes(img.token), 'recipient page does not expose the primary image token');
+  assert.ok(!recipientHtml.includes(`/i/${img.token}?r=${link.token}`), 'recipient page does not publish the primary link');
+  await req(`${recipientUrl}/view-check`, form({ altcha: await solveAltcha(req) }));
   const viewId = crypto.randomBytes(16).toString('hex');
-  r = await req(`/i/${img.token}/render.png?v=${viewId}&r=${link.token}`);
+  r = await req(`${recipientUrl}/render.png?v=${viewId}`);
   assert.equal(r.status, 200, 'link render ok');
   assert.equal(
     db.prepare('SELECT link_label FROM access_logs WHERE image_id = ? AND view_id = ?').get(img.id, viewId).link_label,
@@ -378,13 +385,13 @@ test('recipient links: labelled, one-time with replay-safe counting, revocable',
 
   // Replaying the same view id (video seek / replay) is free.
   const viewsBefore = db.prepare('SELECT view_count FROM images WHERE id = ?').get(img.id).view_count;
-  r = await req(`/i/${img.token}/render.png?v=${viewId}&r=${link.token}`);
+  r = await req(`${recipientUrl}/render.png?v=${viewId}`);
   assert.equal(r.status, 200, 'replay allowed');
   assert.equal(db.prepare('SELECT use_count FROM view_links WHERE id = ?').get(link.id).use_count, 1, 'replay does not consume the link');
   assert.equal(db.prepare('SELECT view_count FROM images WHERE id = ?').get(img.id).view_count, viewsBefore, 'replay does not count a view');
 
   // A fresh view through the used-up one-time link is refused; the plain link still works.
-  assert.equal((await req(`/i/${img.token}/render.png?v=${crypto.randomBytes(16).toString('hex')}&r=${link.token}`)).status, 410, 'one-time link used up');
+  assert.equal((await req(`${recipientUrl}/render.png?v=${crypto.randomBytes(16).toString('hex')}`)).status, 410, 'one-time link used up');
   assert.equal((await req(`/i/${img.token}/render.png?v=${crypto.randomBytes(16).toString('hex')}`)).status, 200, 'plain share link unaffected');
 
   // Revoked links stop working immediately.
@@ -392,7 +399,7 @@ test('recipient links: labelled, one-time with replay-safe counting, revocable',
   await req(`/dashboard/i/${img.token}/links`, form({ _csrf: csrfFrom(lh), label: 'Sam' }));
   const sam = db.prepare("SELECT * FROM view_links WHERE image_id = ? AND label = 'Sam'").get(img.id);
   await req(`/dashboard/i/${img.token}/links/${sam.id}/revoke`, form({ _csrf: csrfFrom(lh) }));
-  assert.equal((await req(`/i/${img.token}?r=${sam.token}`)).status, 410, 'revoked link rejected');
+  assert.equal((await req(`/r/${sam.token}`)).status, 410, 'revoked link rejected');
 });
 
 test('admin: delete user (admins delete non-admins, owner deletes admins, owner/self protected)', async () => {

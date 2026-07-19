@@ -14,7 +14,7 @@
     <div class="card" style="max-width:620px">
       <h2 style="margin-top:0">One quick check</h2>
       <p>Confirm you're not a robot and the content will load.</p>
-      <form method="post" action="/i/<%= encodeURIComponent(token) %>/view-check">
+      <form method="post" action="<%= publicPath %>/view-check">
         <% if (linkToken) { %><input type="hidden" name="r" value="<%= linkToken %>"><% } %>
         <%- include('partials/altcha-widget') %>
         <p><button class="btn" type="submit">View Content</button></p>
@@ -48,7 +48,7 @@
       <p class="muted">If this watermarked copy was redistributed or used to harass someone,
         send administrators the screenshot showing its watermark. The proof is private and
         visible only to administrators.</p>
-      <form method="post" action="/i/<%= encodeURIComponent(token) %>/report" enctype="multipart/form-data" style="display:grid; gap:.5rem; max-width:620px">
+      <form method="post" action="<%= publicPath %>/report" enctype="multipart/form-data" style="display:grid; gap:.5rem; max-width:620px">
         <input type="hidden" name="_csrf" value="<%= csrf %>">
         <label for="report-reason">Reason</label>
         <select id="report-reason" name="reason" required style="padding:.6rem .7rem; border-radius:7px; background:#0d1117; color:#e6edf3; border:1px solid #30363d; font-size:1rem">
@@ -73,8 +73,8 @@
 
 <% if (gateReady) { %><script nonce="<%= nonce %>">
 (function () {
-  var token = <%- JSON.stringify(token) %>;
-  var linkParam = <%- JSON.stringify(linkToken ? '&r=' + encodeURIComponent(linkToken) : '') %>;
+  var publicPath = <%- JSON.stringify(publicPath) %>;
+  var linkParam = <%- JSON.stringify(publicPath.indexOf('/r/') === 0 ? '' : (linkToken ? '&r=' + encodeURIComponent(linkToken) : '')) %>;
   var viewId = (function () {
     try {
       var a = new Uint8Array(16);
@@ -177,7 +177,7 @@
 
   function sendTelemetry(client) {
     try {
-      fetch('/i/' + encodeURIComponent(token) + '/telemetry', {
+      fetch(publicPath + '/telemetry', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ viewId: viewId, client: client }),
@@ -209,10 +209,10 @@
   video.style.width = '100%';
   video.style.maxHeight = '80vh';
   video.style.display = 'block';
-  video.src = '/i/' + encodeURIComponent(token) + '/render.mp4?v=' + viewId + linkParam;
+  video.src = publicPath + '/render.mp4?v=' + viewId + linkParam;
   el.appendChild(video);
   <% } else { %>
-  el.style.backgroundImage = 'url("/i/' + encodeURIComponent(token) + '/render.png?v=' + viewId + linkParam + '")';
+  el.style.backgroundImage = 'url("' + publicPath + '/render.png?v=' + viewId + linkParam + '")';
   <% } %>
 
   // Best-effort save deterrents (a screenshot can never be stopped).

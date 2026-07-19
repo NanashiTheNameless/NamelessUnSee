@@ -61,7 +61,9 @@ successor to the defunct [unsee.cc](https://unsee.cc).
   disk, with an optional S3-compatible backend (`STORAGE_BACKEND=s3` or `r2`-
   Cloudflare R2, MinIO, AWS S3, Backblaze B2...) that only ever receives
   encrypted bytes.
-- **Per-recipient links.** Hand each person their own link to the same upload;
+- **Per-recipient links.** Hand each person their own separate `/r/<token>` link
+  to the same upload; the recipient URL does not reveal the upload's primary
+  share token;
   the access log and the watermark itself show which link every view came
   through. Links can carry a view limit or be one-time, and can be revoked at
   any moment.
@@ -100,6 +102,7 @@ successor to the defunct [unsee.cc](https://unsee.cc).
 share link  ─►  /welcome (agree + ALTCHA)  ─►  consent cookie (session)
                                               │
                               /i/:token  ◄────┘   assess viewer
+                              /r/:token  ─────────┘   recipient link (opaque)
                                    │             (block VPN/proxy/unknown)
                                    ▼
                        /i/:token/render.png   ── watermarked, per-viewer, no-store

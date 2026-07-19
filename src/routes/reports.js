@@ -27,6 +27,11 @@ const proofUpload = multer({
 });
 
 const getImage = db.prepare('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
+const getRecipientLink = db.prepare(
+  `SELECT vl.token AS recipient_token, i.token AS image_token
+   FROM view_links vl JOIN images i ON i.id = vl.image_id
+   WHERE vl.token = ? AND vl.revoked_at IS NULL`
+);
 const insertReport = db.prepare(
   `INSERT INTO leak_reports
      (image_id, reporter_id, view_ref, reason, details, proof_storage_name, proof_mime, proof_byte_size, created_at, access_log_id)
@@ -59,7 +64,15 @@ async function validateProofs(files) {
   }
 }
 
-router.post('/i/:token/report', requireAuth, requireConsent, widgetPage, limiters.report, (req, res) => {
+router.use('/r/:token', (req, res, next) => {
+  const link = getRecipientLink.get(req.params.token);
+  if (!link) return res.status(410).render('error', { title: 'Link no longer valid', message: 'This share link has been used up or revoked. Ask the person who shared it for a new one.' });
+  req.recipientPublicToken = link.recipient_token;
+  req.recipientImageToken = link.image_token;
+  next();
+});
+
+router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsent, widgetPage, limiters.report, (req, res) => {
   proofUpload.array('proofs', 15)(req, res, async (err) => {
     if (err) {
       removeProofs(req.files);
@@ -79,7 +92,7 @@ router.post('/i/:token/report', requireAuth, requireConsent, widgetPage, limiter
       return res.status(400).render('error', { title: 'Report error', message: 'Complete the bot check before submitting.' });
     }
 
-    const image = getImage.get(req.params.token);
+    const image = getImage.get(req.recipientImageToken || req.params.token);
     const reason = REPORT_REASONS.has(req.body.reason) ? req.body.reason : null;
     const details = String(req.body.details || '').trim().slice(0, 2000) || null;
     const viewRef = String(req.body.view_ref || '').trim().slice(0, 120) || null;
@@ -118,7 +131,10 @@ router.post('/i/:token/report', requireAuth, requireConsent, widgetPage, limiter
       reason,
       details,
     }).catch(() => {});
-    res.redirect(`/i/${encodeURIComponent(image.token)}?reported=1`);
+    const publicPath = req.recipientPublicToken
+      ? `/r/${encodeURIComponent(req.recipientPublicToken)}`
+      : `/i/${encodeURIComponent(image.token)}`;
+    res.redirect(`${publicPath}?reported=1`);
   });
 });
 

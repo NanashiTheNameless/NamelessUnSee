@@ -10,7 +10,8 @@
     <p class="muted" style="margin-top:0">Hand each person their own link and the
       access log will show which link every view came through. A one-time link
       stops working after its first view. Revoking a link blocks it immediately;
-      the plain share link keeps working either way.</p>
+      the plain share link keeps working either way. Recipient links do not expose
+      the image's plain share token.</p>
     <form method="post" action="/dashboard/i/<%= encodeURIComponent(image.token) %>/links">
       <input type="hidden" name="_csrf" value="<%= csrf %>">
       <label for="label">Label (who gets this link?)</label>
@@ -30,7 +31,7 @@
         <% for (const link of links) { %>
         <tr>
           <td><%= link.label || '-' %></td>
-          <td class="mono" style="word-break:break-all"><%= baseUrl %>/i/<%= image.token %>?r=<%= link.token %></td>
+          <td class="mono" style="word-break:break-all"><%= baseUrl %>/r/<%= link.token %></td>
           <td><%= link.use_count %></td>
           <td><%= link.max_uses || 'unlimited' %></td>
           <td>
