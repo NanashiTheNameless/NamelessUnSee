@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { GetObjectCommand, PutObjectCommand, DeleteObjectCommand, S3Client } = require('@aws-sdk/client-s3');
 const config = require('./config');
+const { beneath } = require('./util/safe-path');
 
 const MAGIC = Buffer.from('NUS1');
 const keyInput = config.storage.encryptionKey || config.cookieSecret;
@@ -49,7 +50,7 @@ function encryptedObjectName(name) {
 }
 
 function localEncryptedPath(name) {
-  return path.join(config.uploadDir, encryptedObjectName(name));
+  return beneath(config.uploadDir, encryptedObjectName(name));
 }
 
 async function put(sourcePath, storageName) {
@@ -82,7 +83,7 @@ async function encryptedBytes(img) {
 
 async function materialize(img) {
   if (!img.storage_encrypted) {
-    const legacy = path.join(config.uploadDir, img.storage_name);
+    const legacy = beneath(config.uploadDir, img.storage_name);
     if (!fs.existsSync(legacy)) throw new Error('image not found');
     return { path: legacy, cleanup: async () => {} };
   }
@@ -102,13 +103,13 @@ async function remove(img) {
   }
   await Promise.all([
     fs.promises.unlink(localEncryptedPath(img.storage_name)).catch(() => {}),
-    fs.promises.unlink(path.join(config.uploadDir, img.storage_name)).catch(() => {}),
+    fs.promises.unlink(beneath(config.uploadDir, img.storage_name)).catch(() => {}),
   ]);
 }
 
 async function send(res, img) {
   if (!img.storage_encrypted) {
-    const legacyPath = path.join(config.uploadDir, img.storage_name);
+    const legacyPath = beneath(config.uploadDir, img.storage_name);
     if (!fs.existsSync(legacyPath)) throw new Error('image not found');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', img.mime || 'application/octet-stream');

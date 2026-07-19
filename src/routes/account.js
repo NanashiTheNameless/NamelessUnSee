@@ -14,6 +14,7 @@ const geo = require('../geo');
 const { limiters } = require('../ratelimit');
 
 const router = express.Router();
+router.use(limiters.auth);
 
 const getByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
 const getByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
@@ -59,7 +60,12 @@ function validUsername(u) {
   return typeof u === 'string' && /^[a-zA-Z0-9_.-]{3,32}$/.test(u);
 }
 function validEmail(e) {
-  return typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) && e.length <= 254;
+  if (typeof e !== 'string' || e.length < 3 || e.length > 254 || /[\s@]/.test(e)) return false;
+  const at = e.lastIndexOf('@');
+  if (at < 1 || at === e.length - 1) return false;
+  const domain = e.slice(at + 1);
+  const dot = domain.lastIndexOf('.');
+  return dot > 0 && dot < domain.length - 1;
 }
 
 function safeNext(next) {

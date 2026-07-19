@@ -13,6 +13,7 @@ const audit = require('../audit');
 const storage = require('../storage');
 const notify = require('../notify');
 const watermark = require('../watermark');
+const { limiters } = require('../ratelimit');
 
 const router = express.Router();
 
@@ -79,7 +80,7 @@ router.post('/admin/review/:token/flag', requireAdmin, verifyCsrf, (req, res) =>
 
 // Serve the original (un-watermarked) image to admins for review only.
 // Sensitive by nature- restricted to admins, never cached.
-router.get('/admin/review/:token/image', requireAdmin, async (req, res) => {
+router.get('/admin/review/:token/image', limiters.admin, requireAdmin, async (req, res) => {
   const img = getByToken.get(req.params.token);
   if (!img) return res.status(404).end();
   if (!img.mime || !img.mime.startsWith('video/')) {
@@ -96,8 +97,28 @@ router.get('/admin/review/:token/image', requireAdmin, async (req, res) => {
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `inline; filename="${img.token}.mp4"`);
     res.setHeader('Content-Length', String(fs.statSync(outputPath).size));
+    res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-    const stream = fs.createReadStream(outputPath);
+    const size = fs.statSync(outputPath).size;
+    const range = req.headers.range;
+    let stream;
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+      const start = match && match[1] !== '' ? Number(match[1]) : 0;
+      const end = match && match[2] !== '' ? Number(match[2]) : size - 1;
+      if (!match || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || start >= size) {
+        res.status(416).setHeader('Content-Range', `bytes */${size}`).end();
+        fs.unlink(outputPath, () => {});
+        return;
+      }
+      const boundedEnd = Math.min(end, size - 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${boundedEnd}/${size}`);
+      res.setHeader('Content-Length', String(boundedEnd - start + 1));
+      stream = fs.createReadStream(outputPath, { start, end: boundedEnd });
+    } else {
+      stream = fs.createReadStream(outputPath);
+    }
     const cleanup = () => fs.unlink(outputPath, () => {});
     stream.on('close', cleanup);
     stream.on('error', cleanup);

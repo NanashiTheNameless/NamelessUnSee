@@ -13,6 +13,7 @@ const { randomToken } = require('../util/crypto');
 const watermark = require('../watermark');
 const { verifySolution } = require('../altcha');
 const notify = require('../notify');
+const { beneath } = require('../util/safe-path');
 
 const router = express.Router();
 const REPORT_REASONS = new Set(['unauthorized_redistribution', 'harassment', 'other']);
@@ -43,14 +44,17 @@ const insertProof = db.prepare(
 
 function removeProofs(files) {
   for (const file of files || []) {
-    if (file && file.filename) fs.unlink(path.join(config.reportDir, file.filename), () => {});
+    if (file && typeof file.filename === 'string') {
+      try { fs.unlink(beneath(config.reportDir, file.filename), () => {}); } catch { /* invalid path */ }
+    }
   }
 }
 
 async function validateProofs(files) {
-  if (!files || files.length < 1 || files.length > 15) throw new Error('proof count');
+  if (!Array.isArray(files) || files.length < 1 || files.length > 15) throw new Error('proof count');
   for (const file of files) {
-    const proof = await watermark.probe(path.join(config.reportDir, file.filename));
+    if (!file || typeof file.filename !== 'string') throw new Error('invalid proof');
+    const proof = await watermark.probe(beneath(config.reportDir, file.filename));
     if (!proof.format) throw new Error('invalid proof image');
   }
 }

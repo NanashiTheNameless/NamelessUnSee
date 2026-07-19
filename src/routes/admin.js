@@ -10,8 +10,11 @@ const bans = require('../bans');
 const audit = require('../audit');
 const storage = require('../storage');
 const notify = require('../notify');
+const { limiters } = require('../ratelimit');
+const { beneath } = require('../util/safe-path');
 
 const router = express.Router();
+router.use(limiters.admin);
 
 const pendingUsers = db.prepare("SELECT * FROM users WHERE status = 'pending' ORDER BY created_at ASC");
 const allUsers = db.prepare('SELECT * FROM users ORDER BY created_at DESC');
@@ -111,7 +114,7 @@ router.get('/admin/users/:id/files', requireAdmin, (req, res) => {
   res.render('admin-user-files', { target: user, images: listUserImages.all(user.id) });
 });
 
-router.get('/admin/users/:id/files/:token', requireAdmin, async (req, res) => {
+router.get('/admin/users/:id/files/:token', limiters.admin, requireAdmin, async (req, res) => {
   const image = db.prepare(
     'SELECT i.* FROM images i WHERE i.owner_id = ? AND i.token = ? AND i.deleted_at IS NULL'
   ).get(req.params.id, req.params.token);
@@ -150,10 +153,11 @@ router.post('/admin/users/:id/files/delete-all', requireAdmin, verifyCsrf, async
   res.redirect(`/admin/users/${encodeURIComponent(req.params.id)}/files`);
 });
 
-router.get('/admin/reports/:id/proof', requireAdmin, (req, res) => {
+router.get('/admin/reports/:id/proof', limiters.admin, requireAdmin, (req, res) => {
   const report = getReport.get(req.params.id);
   if (!report) return res.status(404).end();
-  const proofPath = path.join(config.reportDir, report.proof_storage_name);
+  let proofPath;
+  try { proofPath = beneath(config.reportDir, report.proof_storage_name); } catch { return res.status(404).end(); }
   if (!fs.existsSync(proofPath)) return res.status(404).end();
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', report.proof_mime);
@@ -161,12 +165,13 @@ router.get('/admin/reports/:id/proof', requireAdmin, (req, res) => {
   fs.createReadStream(proofPath).pipe(res);
 });
 
-router.get('/admin/reports/:id/proof/:proofId', requireAdmin, (req, res) => {
+router.get('/admin/reports/:id/proof/:proofId', limiters.admin, requireAdmin, (req, res) => {
   const proof = db.prepare(
     'SELECT storage_name, mime FROM leak_report_proofs WHERE id = ? AND report_id = ?'
   ).get(req.params.proofId, req.params.id);
   if (!proof) return res.status(404).end();
-  const proofPath = path.join(config.reportDir, proof.storage_name);
+  let proofPath;
+  try { proofPath = beneath(config.reportDir, proof.storage_name); } catch { return res.status(404).end(); }
   if (!fs.existsSync(proofPath)) return res.status(404).end();
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', proof.mime);

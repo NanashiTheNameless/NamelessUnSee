@@ -54,7 +54,7 @@ function parseUserAgent(ua) {
 
   // Device type
   if (/iPad|Tablet/i.test(ua)) out.deviceType = 'tablet';
-  else if (/Mobi|iPhone|Android.*Mobile/i.test(ua)) out.deviceType = 'mobile';
+  else if (/(?:Mobi|iPhone)/i.test(ua) || (ua.includes('Android') && ua.includes('Mobile'))) out.deviceType = 'mobile';
   else if (/Android/i.test(ua)) out.deviceType = 'tablet';
 
   return out;

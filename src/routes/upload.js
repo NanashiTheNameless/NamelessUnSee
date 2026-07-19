@@ -14,8 +14,14 @@ const moderation = require('../moderation');
 const storage = require('../storage');
 const ranks = require('../ranks');
 const notify = require('../notify');
+const { beneath } = require('../util/safe-path');
 
 const router = express.Router();
+
+function stagedPath(file) {
+  if (!file || typeof file.filename !== 'string') throw new Error('invalid staged file');
+  return beneath(config.tempDir, file.filename);
+}
 
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg']);
 const EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'video/ogg': '.ogv' };
@@ -110,13 +116,18 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     }
     // CSRF check (post-parse). Delete any uploaded file if it fails.
     if (!req.session || !req.body._csrf || req.body._csrf !== req.session.csrf_token) {
-      if (req.file) fs.unlink(req.file.path || path.join(config.tempDir, req.file.filename), () => {});
+      if (req.file) {
+        try { fs.unlink(stagedPath(req.file), () => {}); } catch { /* invalid staged path */ }
+      }
       return res.status(403).render('error', { title: 'Forbidden', message: 'Invalid CSRF token. Please reload and try again.' });
     }
     if (!req.file) {
       return res.status(400).render('error', { title: 'Upload error', message: 'No media file provided (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
     }
-    const filePath = req.file.path || path.join(config.tempDir, req.file.filename);
+    let filePath;
+    try { filePath = stagedPath(req.file); } catch {
+      return res.status(400).render('error', { title: 'Upload error', message: 'Invalid staged upload.' });
+    }
     if (req.file.buffer && !fs.existsSync(filePath)) {
       try {
         await fs.promises.writeFile(filePath, req.file.buffer, { mode: 0o600 });

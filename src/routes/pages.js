@@ -6,8 +6,10 @@ const express = require('express');
 const config = require('../config');
 const { legalPage, gatePage, grantConsent, hasConsent } = require('../middleware');
 const { verifySolution, obfuscate } = require('../altcha');
+const { limiters } = require('../ratelimit');
 
 const router = express.Router();
+router.use(limiters.public);
 
 const LICENSE_PATH = path.join(__dirname, '..', '..', 'LICENSE.md');
 

@@ -126,6 +126,9 @@ const limiters = {
   render: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: false }),
   telemetry: createLimiter({ name: 'telemetry', windowMs: rl.telemetry.windowMs, max: rl.telemetry.max, by: 'ip', html: false }),
   report: createLimiter({ name: 'report', windowMs: rl.report.windowMs, max: rl.report.max, by: 'user', html: true }),
+  admin: createLimiter({ name: 'admin', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
+  public: createLimiter({ name: 'public', windowMs: 60 * 1000, max: 300, by: 'ip', html: false }),
+  auth: createLimiter({ name: 'auth', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
 };
 
 module.exports = { createLimiter, limiters, _buckets: buckets };
