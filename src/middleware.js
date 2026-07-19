@@ -55,7 +55,7 @@ function baseSecurity(req, res, next) {
   // a per-response nonce instead of unsafe-inline.
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; " +
+    "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; " +
       `font-src 'self'; ${scriptPolicy(res)}; worker-src 'self' blob:; ` +
       `form-action 'self'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self' ${CLOUDFLARE_INSIGHTS_CONNECT}`
   );

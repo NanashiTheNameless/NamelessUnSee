@@ -55,6 +55,7 @@ test('public + legal pages', async () => {
   const appCsp = (await req('/login')).headers.get('content-security-policy') || '';
   assert.ok(appCsp.includes('https://static.cloudflareinsights.com'), 'app CSP allows Cloudflare Insights');
   assert.ok(appCsp.includes('https://cloudflareinsights.com'), 'app CSP allows Insights beacon connections');
+  assert.ok(appCsp.includes("media-src 'self'"), 'app CSP allows same-origin video previews');
   assert.match(appCsp, /script-src 'nonce-[^']+'/i, 'app CSP includes a per-response script nonce');
 });
 
