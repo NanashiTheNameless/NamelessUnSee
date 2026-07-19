@@ -60,7 +60,7 @@ function validUsername(u) {
   return typeof u === 'string' && /^[a-zA-Z0-9_.-]{3,32}$/.test(u);
 }
 function validEmail(e) {
-  if (typeof e !== 'string' || e.length < 3 || e.length > 254 || /[\s@]/.test(e)) return false;
+  if (typeof e !== 'string' || e.length < 3 || e.length > 254 || /\s/.test(e)) return false;
   const at = e.lastIndexOf('@');
   if (at < 1 || at === e.length - 1) return false;
   const domain = e.slice(at + 1);
