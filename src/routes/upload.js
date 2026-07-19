@@ -33,7 +33,7 @@ const multerStorage = multer.diskStorage({
 function uploadFor(user) {
   const options = {
     storage: multerStorage,
-    limits: { files: 1 },
+    limits: { files: 50 },
     fileFilter: (req, file, cb) => cb(null, ALLOWED_MIME.has(file.mimetype)),
   };
   if (!ranks.isOwner(user)) options.limits.fileSize = config.maxUploadBytesHard;
@@ -69,6 +69,8 @@ const getMineByToken = db.prepare('SELECT * FROM images WHERE token = ? AND owne
 const softDelete = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?');
 const getDefaults = db.prepare('SELECT default_ttl, default_timer_start, default_max_views, upload_max_bytes, storage_limit_bytes, rank FROM users WHERE id = ?');
 const storageUsed = db.prepare('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM images WHERE owner_id = ? AND deleted_at IS NULL');
+const insertGallery = db.prepare('INSERT INTO galleries (token, owner_id, title, created_at) VALUES (?, ?, ?, ?)');
+const addGalleryItem = db.prepare('INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)');
 
 const LOGS_PAGE_SIZE = 50;
 const countLogsAll = db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?');
@@ -102,6 +104,129 @@ router.get('/dashboard', requireAuth, (req, res) => {
     defaults,
     notice: req.query.uploaded ? 'Image uploaded.' : null,
     flagged: !!req.query.flagged,
+    gallery: req.query.gallery || null,
+  });
+});
+
+// Batch upload endpoint. A batch with multiple files is automatically put into
+// a gallery; the single-file path remains equivalent to the original upload.
+router.post('/upload', requireAuth, limiters.upload, (req, res) => {
+  uploadFor(req.user).array('image', 50)(req, res, async (err) => {
+    const files = req.files || [];
+    const removeStaged = () => files.forEach((file) => {
+      try { fs.unlink(stagedPath(file), () => {}); } catch { /* invalid staged path */ }
+    });
+    if (err) {
+      removeStaged();
+      const msg = err.code === 'LIMIT_FILE_SIZE'
+        ? `File too large (max ${Math.round(config.maxUploadBytes / (1024 * 1024))} MB).`
+        : err.code === 'LIMIT_FILE_COUNT'
+          ? 'You may upload up to 50 files at once.'
+          : 'Upload failed.';
+      return res.status(400).render('error', { title: 'Upload error', message: msg });
+    }
+    if (!req.session || !req.body._csrf || req.body._csrf !== req.session.csrf_token) {
+      removeStaged();
+      return res.status(403).render('error', { title: 'Forbidden', message: 'Invalid CSRF token. Please reload and try again.' });
+    }
+    if (!files.length) {
+      return res.status(400).render('error', { title: 'Upload error', message: 'No media files provided (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
+    }
+
+    const limits = getDefaults.get(req.user.id) || {};
+    const effective = ranks.limits({ ...req.user, ...limits });
+    const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
+    if (files.some((file) => file.size > effective.uploadBytes)) {
+      removeStaged();
+      return res.status(400).render('error', { title: 'Upload error', message: `File too large (your limit is ${Math.round(effective.uploadBytes / (1024 * 1024))} MB per file).` });
+    }
+    const used = storageUsed.get(req.user.id).bytes;
+    if (used + totalBytes > effective.storageBytes) {
+      removeStaged();
+      return res.status(400).render('error', { title: 'Upload error', message: `Storage limit reached. You have ${Math.max(0, Math.floor((effective.storageBytes - used) / (1024 * 1024)))} MB remaining.` });
+    }
+
+    const defaults = getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
+    const requestedTtl = req.body.ttl || defaults.default_ttl;
+    const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
+    const ttlSeconds = TTL_PRESETS[ttlKey];
+    const timerStart = (req.body.timer_start || defaults.default_timer_start) === 'upload' ? 'upload' : 'first_view';
+    const requestedMaxViews = req.body.max_views === undefined || req.body.max_views === '' ? defaults.default_max_views : req.body.max_views;
+    let maxViews = parseInt(requestedMaxViews, 10);
+    maxViews = Number.isInteger(maxViews) && maxViews > 0 ? maxViews : null;
+    const title = String(req.body.title || '').slice(0, 200) || null;
+    const created = [];
+    let flagged = false;
+
+    try {
+      for (const file of files) {
+        const filePath = stagedPath(file);
+        if (file.buffer && !fs.existsSync(filePath)) await fs.promises.writeFile(filePath, file.buffer, { mode: 0o600 });
+        let dims;
+        try {
+          dims = await watermark.probe(filePath);
+          if (!dims.format) throw new Error('unrecognised media');
+        } catch {
+          throw new Error('That file is not a valid image or video.');
+        }
+
+        const now = Date.now();
+        const expiresAt = timerStart === 'upload' && ttlSeconds ? now + ttlSeconds * 1000 : null;
+        let mod = { status: 'ok', reason: null, score: null, phash: null };
+        if (ranks.shouldScan(req.user)) {
+          try { mod = await moderation.scan(filePath); } catch (error) {
+            console.warn('[NamelessUnSee] moderation scan failed:', error.message);
+            if (config.moderation.enabled && config.moderation.nsfw.enabled && config.moderation.nsfw.failClosed) {
+              mod = { status: 'review', reason: 'moderation-scan:failed', score: null, details: null, phash: null };
+            }
+          }
+        }
+
+        const token = uuidv7(now);
+        const mediaDir = dims.mediaType === 'video' ? 'Videos' : 'Images';
+        const datePart = [new Date(now).getMonth() + 1, new Date(now).getDate(), new Date(now).getFullYear()].map((v) => String(v).padStart(2, '0')).join('.');
+        const storageName = `upload/${req.user.id}/${mediaDir}/${datePart}_${now}_${token}${EXT[file.mimetype] || '.bin'}`;
+        const stored = await storage.put(filePath, storageName);
+        fs.unlink(filePath, () => {});
+        try {
+          const info = insertImage.run({
+            token, owner_id: req.user.id, storage_name: stored.storage_name, mime: file.mimetype,
+            width: dims.width, height: dims.height, byte_size: file.size, title, created_at: now,
+            ttl_seconds: ttlSeconds, timer_start: timerStart, max_views: maxViews, expires_at: expiresAt,
+            phash: mod.phash, moderation_status: mod.status, moderation_reason: mod.reason,
+            moderation_score: mod.score, moderation_details: mod.details ? JSON.stringify(mod.details) : null,
+            storage_backend: stored.storage_backend, storage_encrypted: stored.storage_encrypted,
+          });
+          const image = db.prepare('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
+          created.push(image);
+        } catch (error) {
+          await storage.remove(stored).catch(() => {});
+          throw error;
+        }
+        if (mod.status !== 'ok') {
+          flagged = true;
+          notify.notifyAdminFlag({ username: req.user.username, email: req.user.email, token, title, reason: mod.reason, score: mod.score, reports: mod.details }).catch(() => {});
+        }
+      }
+    } catch (error) {
+      removeStaged();
+      for (const image of created) {
+        softDelete.run(Date.now(), image.id);
+        storage.remove(image).catch(() => {});
+      }
+      const message = error.message === 'That file is not a valid image or video.' ? error.message : 'The upload could not be stored.';
+      return res.status(400).render('error', { title: 'Upload error', message });
+    }
+
+    let galleryToken = null;
+    if (created.length > 1) {
+      const now = Date.now();
+      galleryToken = uuidv7(now);
+      const galleryId = insertGallery.run(galleryToken, req.user.id, title || 'Uploaded gallery', now).lastInsertRowid;
+      const tx = db.transaction(() => created.forEach((image, index) => addGalleryItem.run(galleryId, image.id, index + 1, now)));
+      tx();
+    }
+    res.redirect('/dashboard?uploaded=1' + (flagged ? '&flagged=1' : '') + (galleryToken ? `&gallery=${encodeURIComponent(galleryToken)}` : ''));
   });
 });
 

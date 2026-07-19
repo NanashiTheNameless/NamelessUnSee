@@ -13,18 +13,23 @@
 <div class="wrap">
   <h1>Your images and videos</h1>
   <% if (flagged) { %><div class="error upload-result" role="status" data-auto-dismiss="6000">Your upload was flagged by automated moderation and is held pending review by an administrator.</div><% } %>
-  <% if (notice && !flagged) { %><div class="notice upload-result" role="status" data-auto-dismiss="4500"><%= notice %></div><% } %>
+  <% if (notice && !flagged) { %>
+    <div class="notice upload-result" role="status" data-auto-dismiss="4500">
+      <%= gallery ? 'Images uploaded and grouped into a gallery.' : notice %>
+      <% if (gallery) { %> <a href="/g/<%= encodeURIComponent(gallery) %>">Open gallery</a><% } %>
+    </div>
+  <% } %>
 
   <div class="card">
     <h2 style="margin-top:0">Upload an image or video</h2>
-    <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg.</p>
+    <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Select multiple files to create a gallery automatically. Allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg.</p>
     <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
       <input type="hidden" name="_csrf" value="<%= csrf %>">
       <label for="title">Label <span class="muted">(optional, for your reference)</span></label>
       <input type="text" id="title" name="title" maxlength="200">
 
       <label for="image">Image or video file</label>
-      <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,video/mp4,video/webm,video/quicktime,video/ogg" required>
+      <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,video/mp4,video/webm,video/quicktime,video/ogg" multiple required>
 
       <div class="grid two" style="margin-top:.6rem">
         <div>

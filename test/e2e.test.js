@@ -169,8 +169,22 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
   assert.ok(fs.existsSync(path.join(config.uploadDir, storedImage.storage_name + '.enc')), 'encrypted local object exists');
   assert.equal(fs.existsSync(path.join(config.uploadDir, storedImage.storage_name)), false, 'plaintext original is removed');
 
-  const d2 = await (await req('/dashboard')).text();
-  const token = (d2.match(/\/i\/([A-Za-z0-9_-]{6,})"/) || [])[1];
+  // Multiple files are accepted together and automatically grouped.
+  const batch = new FormData();
+  batch.set('_csrf', csrf);
+  batch.set('title', 'batch gallery');
+  batch.set('ttl', '1h');
+  batch.append('image', new Blob([await pngBuffer(80, 60)], { type: 'image/png' }), 'batch-a.png');
+  batch.append('image', new Blob([await pngBuffer(90, 70)], { type: 'image/png' }), 'batch-b.png');
+  r = await req('/upload', { method: 'POST', body: batch });
+  assert.equal(r.status, 302, 'batch upload ok');
+  const batchGalleryToken = new URL(r.headers.get('location'), config.baseUrl).searchParams.get('gallery');
+  assert.ok(batchGalleryToken, 'batch upload redirects with gallery token');
+  const batchGallery = db.prepare('SELECT id FROM galleries WHERE token = ?').get(batchGalleryToken);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM gallery_items WHERE gallery_id = ?').get(batchGallery.id).n, 2, 'both files grouped into gallery');
+  assert.equal((await req('/g/' + batchGalleryToken)).status, 200, 'generated gallery opens');
+
+  const token = db.prepare("SELECT token FROM images WHERE title = 'e2e' ORDER BY id DESC").get().token;
   assert.ok(token, 'share token present');
 
   // View page
