@@ -1,0 +1,66 @@
+<% var pageTitle = 'NamelessUnSee - edit gallery'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/dashboard">- Dashboard</a> · <a href="/dashboard/galleries">Galleries</a></p>
+  <h1>Edit gallery<% if (gallery.title) { %> - <%= gallery.title %><% } %></h1>
+
+  <% if (saved) { %><div class="notice">Saved.</div><% } %>
+
+  <div class="card" style="max-width:980px">
+    <p class="mono" style="margin-top:0">
+      Share link:
+      <a href="<%= baseUrl %>/g/<%= gallery.token %>"><%= baseUrl %>/g/<%= gallery.token %></a>
+    </p>
+    <p class="muted">Select up to 50 items. Ordering is the order you select here.</p>
+
+    <form method="post" action="/dashboard/g/<%= encodeURIComponent(gallery.token) %>">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <div class="scroll" style="max-width:100%">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:5rem">Include</th>
+              <th>Title</th>
+              <th class="mono">Token</th>
+              <th>Type</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% for (const img of images) { %>
+              <tr>
+                <td>
+                  <input type="checkbox" name="images" value="<%= img.token %>" <%= selected.has(img.id) ? 'checked' : '' %> style="width:auto">
+                </td>
+                <td><%= img.title || '(untitled)' %></td>
+                <td class="mono" style="word-break:break-all"><%= img.token %></td>
+                <td><%= (img.mime || '').startsWith('video/') ? 'video' : 'image' %></td>
+                <td class="muted"><%= img.width %>×<%= img.height %></td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+
+      <p style="margin-top:1rem">
+        <button class="btn" type="submit">Save gallery</button>
+        <a class="btn secondary" href="<%= baseUrl %>/g/<%= gallery.token %>">Open share link</a>
+      </p>
+    </form>
+  </div>
+
+  <div class="card" style="max-width:980px">
+    <h2 style="margin-top:0">Current items</h2>
+    <% if (!items.length) { %>
+      <p class="muted">No items.</p>
+    <% } else { %>
+      <ol>
+        <% for (const it of items) { %>
+          <li class="mono"><a href="/i/<%= it.token %>"><%= it.token %></a><% if (it.title) { %> — <%= it.title %><% } %></li>
+        <% } %>
+      </ol>
+    <% } %>
+  </div>
+</div>
+<%- include('partials/foot') %>

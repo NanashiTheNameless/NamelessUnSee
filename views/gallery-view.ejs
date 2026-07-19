@@ -1,0 +1,32 @@
+<% var pageTitle = gallery && gallery.title ? ('NamelessUnSee - ' + gallery.title) : 'NamelessUnSee - gallery'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <div class="notice" style="background:#1a1200; border-color:#8a6d00; color:#ffe08a">
+    You are viewing traceable copies. Your IP, location and device are watermarked
+    into each item you open and your visit is being logged. See the
+    <a href="/privacy">Privacy Policy</a>.
+  </div>
+
+  <% if (gallery && gallery.title) { %><h1><%= gallery.title %></h1><% } else { %><h1>Gallery</h1><% } %>
+
+  <div class="card" style="max-width:1100px">
+    <p class="muted" style="margin-top:0">Click an item to open it. Each item is still protected and watermarked per-view.</p>
+    <div class="grid" style="grid-template-columns: 1fr; gap:.7rem">
+      <% for (const it of items) { %>
+        <a class="card" style="margin:0; width:100%; display:block" href="/i/<%= encodeURIComponent(it.token) %>">
+          <div style="display:flex; gap:.8rem; align-items:baseline; flex-wrap:wrap">
+            <strong><%= it.title || '(untitled)' %></strong>
+            <span class="muted"><%= it.mediaType === 'video' ? 'video' : 'image' %></span>
+            <% if (it.width && it.height) { %><span class="muted mono"><%= it.width %>×<%= it.height %></span><% } %>
+            <span class="spacer" style="flex:1"></span>
+            <span class="mono"><%= it.token %></span>
+          </div>
+        </a>
+      <% } %>
+    </div>
+  </div>
+
+  <p class="muted">Each item still has its own share token; this gallery link just groups them.</p>
+</div>
+<%- include('partials/foot') %>

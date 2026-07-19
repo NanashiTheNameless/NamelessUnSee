@@ -65,6 +65,9 @@ successor to the defunct [unsee.cc](https://unsee.cc).
   the access log and the watermark itself show which link every view came
   through. Links can carry a view limit or be one-time, and can be revoked at
   any moment.
+- **Galleries.** Combine multiple uploads into a single **gallery share link**
+  (`/g/<token>`). Viewers see a list of items; each item is still served through
+  the normal per-image view flow and is watermarked/logged per view.
 - **Accounts with admin approval.** Uploading requires an account. The first
   account is auto-approved (a regular user); every later signup stays **pending**
   until an administrator approves it. **Admins are created only via the CLI.**

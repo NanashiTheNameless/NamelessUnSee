@@ -101,6 +101,7 @@ app.use(require('./routes/account'));
 app.use(require('./routes/admin'));
 app.use(require('./routes/review'));
 app.use(require('./routes/upload'));
+app.use(require('./routes/galleries'));
 app.use(require('./routes/view'));
 app.use(require('./routes/reports'));
 

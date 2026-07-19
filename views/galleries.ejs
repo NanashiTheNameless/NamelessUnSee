@@ -1,0 +1,70 @@
+<% var pageTitle = 'NamelessUnSee - galleries'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p><a href="/dashboard">- Dashboard</a></p>
+  <h1>Galleries</h1>
+
+  <% if (created) { %><div class="notice">Gallery created.</div><% } %>
+
+  <div class="card" style="max-width:980px">
+    <h2 style="margin-top:0">Create a gallery</h2>
+    <p class="muted">Select multiple uploads and get one share link that shows them as a gallery.</p>
+    <form method="post" action="/dashboard/galleries">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="title">Title <span class="muted">(optional)</span></label>
+      <input type="text" id="title" name="title" maxlength="200" placeholder="e.g. Vacation set">
+      <label>Pick images/videos</label>
+      <div class="scroll" style="max-width:100%">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:5rem">Add</th>
+              <th>Title</th>
+              <th class="mono">Token</th>
+              <th>Type</th>
+              <th>Size</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% images.forEach(function(img){ %>
+              <tr>
+                <td><input type="checkbox" name="images" value="<%= img.token %>" style="width:auto"></td>
+                <td><%= img.title || '(untitled)' %></td>
+                <td class="mono" style="word-break:break-all"><%= img.token %></td>
+                <td><%= (img.mime || '').startsWith('video/') ? 'video' : 'image' %></td>
+                <td class="muted"><%= img.width %>×<%= img.height %></td>
+              </tr>
+            <% }); %>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin:.6rem 0 .2rem">After creating, you can edit the gallery to add/remove items.</p>
+      <p><button class="btn" type="submit">Create gallery</button></p>
+    </form>
+  </div>
+
+  <% if (!galleries.length) { %>
+    <p class="muted">No galleries yet.</p>
+  <% } else { %>
+    <% galleries.forEach(function(g){ %>
+      <div class="card" style="max-width:980px">
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline">
+          <strong><%= g.title || '(untitled gallery)' %></strong>
+          <span class="muted"><%= g.item_count %> item<%= g.item_count === 1 ? '' : 's' %></span>
+          <span class="spacer" style="flex:1"></span>
+          <a class="btn secondary small" href="/dashboard/g/<%= encodeURIComponent(g.token) %>">Edit</a>
+          <form method="post" action="/dashboard/g/<%= encodeURIComponent(g.token) %>/delete" onsubmit="return confirm('Delete this gallery?');">
+            <input type="hidden" name="_csrf" value="<%= csrf %>">
+            <button class="btn danger small" type="submit">Delete</button>
+          </form>
+        </div>
+        <p class="mono" style="margin:.6rem 0">
+          Share link:
+          <a href="<%= baseUrl %>/g/<%= g.token %>"><%= baseUrl %>/g/<%= g.token %></a>
+        </p>
+      </div>
+    <% }); %>
+  <% } %>
+</div>
+<%- include('partials/foot') %>

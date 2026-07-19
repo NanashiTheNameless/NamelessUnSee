@@ -162,6 +162,24 @@ CREATE TABLE IF NOT EXISTS view_links (
   revoked_at INTEGER
 );
 
+-- Galleries: a single share link that groups multiple uploads.
+CREATE TABLE IF NOT EXISTS galleries (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  token      TEXT NOT NULL UNIQUE, -- public slug in /g/:token
+  owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS gallery_items (
+  gallery_id INTEGER NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
+  image_id   INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  position   INTEGER,
+  added_at   INTEGER NOT NULL,
+  PRIMARY KEY (gallery_id, image_id)
+);
+
 CREATE TABLE IF NOT EXISTS leak_report_proofs (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   report_id    INTEGER NOT NULL REFERENCES leak_reports(id) ON DELETE CASCADE,
@@ -173,6 +191,8 @@ CREATE TABLE IF NOT EXISTS leak_report_proofs (
 
 CREATE INDEX IF NOT EXISTS idx_images_owner ON images(owner_id);
 CREATE INDEX IF NOT EXISTS idx_view_links_image ON view_links(image_id);
+CREATE INDEX IF NOT EXISTS idx_galleries_owner ON galleries(owner_id);
+CREATE INDEX IF NOT EXISTS idx_gallery_items_gallery ON gallery_items(gallery_id);
 CREATE INDEX IF NOT EXISTS idx_images_expires ON images(expires_at);
 CREATE INDEX IF NOT EXISTS idx_logs_image ON access_logs(image_id);
 CREATE INDEX IF NOT EXISTS idx_reports_status ON leak_reports(status, created_at);
@@ -291,5 +311,28 @@ addColumn('images', 'moderation_reason', 'moderation_reason TEXT');
 addColumn('images', 'moderation_score', 'moderation_score REAL');
 addColumn('images', 'moderation_details', 'moderation_details TEXT');
 addColumn('access_logs', 'link_label', 'link_label TEXT');
+
+// Gallery tables were added after initial release. Older DB files won't have
+// them, but SQLite can't IF NOT EXISTS on ALTER TABLE for missing tables.
+// Create them lazily here.
+db.exec(`
+CREATE TABLE IF NOT EXISTS galleries (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  token      TEXT NOT NULL UNIQUE,
+  owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title      TEXT,
+  created_at INTEGER NOT NULL,
+  deleted_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS gallery_items (
+  gallery_id INTEGER NOT NULL REFERENCES galleries(id) ON DELETE CASCADE,
+  image_id   INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  position   INTEGER,
+  added_at   INTEGER NOT NULL,
+  PRIMARY KEY (gallery_id, image_id)
+);
+CREATE INDEX IF NOT EXISTS idx_galleries_owner ON galleries(owner_id);
+CREATE INDEX IF NOT EXISTS idx_gallery_items_gallery ON gallery_items(gallery_id);
+`);
 
 module.exports = db;
