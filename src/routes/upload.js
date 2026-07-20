@@ -15,6 +15,7 @@ const storage = require('../storage');
 const ranks = require('../ranks');
 const notify = require('../notify');
 const { beneath } = require('../util/safe-path');
+const { verifySolution } = require('../altcha');
 
 const router = express.Router();
 
@@ -131,6 +132,10 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     }
     if (!files.length) {
       return res.status(400).render('error', { title: 'Upload error', message: 'No media files provided (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
+    }
+    if (!verifySolution(req.body.altcha)) {
+      removeStaged();
+      return res.status(400).render('error', { title: 'Upload error', message: 'Complete the bot check before uploading.' });
     }
 
     const limits = getDefaults.get(req.user.id) || {};

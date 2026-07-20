@@ -156,11 +156,18 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
   const dash = await (await req('/dashboard')).text();
   const csrf = csrfFrom(dash);
   assert.ok(csrf, 'csrf on dashboard');
+  const missingAltcha = new FormData();
+  missingAltcha.set('_csrf', csrf);
+  missingAltcha.set('image', new Blob([await pngBuffer(40, 30)], { type: 'image/png' }), 'missing-altcha.png');
+  r = await req('/upload', { method: 'POST', body: missingAltcha });
+  assert.equal(r.status, 400, 'upload without ALTCHA is rejected');
+
   const fd = new FormData();
   fd.set('_csrf', csrf);
   fd.set('title', 'e2e');
   fd.set('ttl', '1h');
   fd.set('timer_start', 'first_view');
+  fd.set('altcha', await solveAltcha(req));
   fd.set('image', new Blob([await pngBuffer(300, 180)], { type: 'image/png' }), 't.png');
   r = await req('/upload', { method: 'POST', body: fd });
   assert.equal(r.status, 302, 'upload ok');
@@ -174,6 +181,7 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
   batch.set('_csrf', csrf);
   batch.set('title', 'batch gallery');
   batch.set('ttl', '1h');
+  batch.set('altcha', await solveAltcha(req));
   batch.append('image', new Blob([await pngBuffer(80, 60)], { type: 'image/png' }), 'batch-a.png');
   batch.append('image', new Blob([await pngBuffer(90, 70)], { type: 'image/png' }), 'batch-b.png');
   r = await req('/upload', { method: 'POST', body: batch });
@@ -267,6 +275,7 @@ test('retention: max_views deletes after the cap', async () => {
   fd.set('title', 'oneshot');
   fd.set('ttl', 'never');
   fd.set('max_views', '1');
+  fd.set('altcha', await solveAltcha(req));
   fd.set('image', new Blob([await pngBuffer(120, 90)], { type: 'image/png' }), 'o.png');
   await req('/upload', { method: 'POST', body: fd });
 
@@ -363,6 +372,7 @@ test('recipient links: labelled, one-time with replay-safe counting, revocable',
   fd.set('ttl', '1h');
   fd.set('timer_start', 'first_view');
   fd.set('max_views', '0');
+  fd.set('altcha', await solveAltcha(req));
   fd.set('image', new Blob([await pngBuffer(120, 90)], { type: 'image/png' }), 'l.png');
   r = await req('/upload', { method: 'POST', body: fd });
   assert.equal(r.status, 302, 'upload ok');

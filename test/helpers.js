@@ -362,6 +362,16 @@ async function solveAltcha(req) {
   throw new Error('altcha unsolved');
 }
 
+async function uploadForm(req, fields, file, filename = 'upload.png', type = 'image/png') {
+  const csrf = csrfFrom(await (await req('/dashboard')).text());
+  const fd = new FormData();
+  fd.set('_csrf', csrf);
+  fd.set('altcha', await solveAltcha(req));
+  for (const [key, value] of Object.entries(fields || {})) fd.set(key, value);
+  fd.set('image', new Blob([file], { type }), filename);
+  return req('/upload', { method: 'POST', body: fd });
+}
+
 // Pass the consent gate (solve ALTCHA + agree).
 async function consent(req, next = '/') {
   const sol = await solveAltcha(req);
@@ -373,4 +383,4 @@ function csrfFrom(html) {
   return m && m[1];
 }
 
-module.exports = { newJar, makeReq, form, solveAltcha, consent, csrfFrom };
+module.exports = { newJar, makeReq, form, solveAltcha, uploadForm, consent, csrfFrom };

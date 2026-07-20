@@ -29,7 +29,7 @@ const db = require('../src/db');
 const bans = require('../src/bans');
 const nsfw = require('../src/nsfw');
 const { hashPassword, uuidv7 } = require('../src/util/crypto');
-const { newJar, makeReq, form, consent, csrfFrom, solveAltcha } = require('./helpers');
+const { newJar, makeReq, form, consent, csrfFrom, solveAltcha, uploadForm } = require('./helpers');
 let scorer = async () => 0; // controllable stub
 
 before(() => {
@@ -58,13 +58,7 @@ async function loginConsent(username, password) {
   return { jar, req };
 }
 async function uploadImage(req, buf, title) {
-  const csrf = csrfFrom(await (await req('/dashboard')).text());
-  const fd = new FormData();
-  fd.set('_csrf', csrf);
-  fd.set('title', title);
-  fd.set('ttl', 'never');
-  fd.set('image', new Blob([buf], { type: 'image/png' }), 't.png');
-  return req('/upload', { method: 'POST', body: fd });
+  return uploadForm(req, { title, ttl: 'never' }, buf, 't.png');
 }
 function newestToken(title) {
   return db.prepare('SELECT token FROM images WHERE title = ? ORDER BY id DESC').get(title).token;
