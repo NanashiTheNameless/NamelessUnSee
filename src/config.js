@@ -124,7 +124,7 @@ const config = {
     // from COOKIE_SECRET so it works out of the box.
     hmacKey: process.env.ALTCHA_HMAC_KEY || null,
     // Proof-of-work search ceiling. Higher values increase client CPU cost.
-    maxNumber: int(process.env.ALTCHA_MAX_NUMBER, 200000),
+    maxNumber: int(process.env.ALTCHA_MAX_NUMBER, 400000),
     widget: {
       type: process.env.ALTCHA_WIDGET_TYPE || 'checkbox',
       display: process.env.ALTCHA_WIDGET_DISPLAY || 'standard',

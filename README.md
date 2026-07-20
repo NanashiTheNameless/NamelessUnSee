@@ -200,7 +200,7 @@ container storage and upload it directly to R2.
 | `PORT` | `3000` | Port the Node server listens on |
 | `COOKIE_SECRET` | *(required)* | Signs session & consent cookies- set a long random value |
 | `ALTCHA_HMAC_KEY` | derived from `COOKIE_SECRET` | Dedicated persistent HMAC key for ALTCHA challenges; set separately in production |
-| `ALTCHA_MAX_NUMBER` | `200000` | ALTCHA proof-of-work search ceiling; higher values increase anti-bot friction and client CPU time |
+| `ALTCHA_MAX_NUMBER` | `400000` | ALTCHA proof-of-work search ceiling; higher values increase anti-bot friction and client CPU time |
 | `SECURE_COOKIES` | `false` | `true` in production (behind HTTPS/Cloudflare) |
 | `SOURCE_URL` | this repo | Source-code link shown in the footer and on info pages |
 | `DATA_DIR` | `./data` | Where the SQLite DB and uploaded originals live |
