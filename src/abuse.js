@@ -51,7 +51,17 @@ function registrationRisk(req) {
   return events.length >= config.abuse.signupBurstMax;
 }
 
-function validateSignup({ email, username, password }) {
+// A short written case for wanting an account. Admins read it when approving,
+// and a bot that cannot compose one does not get into the queue.
+const REASON_MIN = 20;
+const REASON_MAX = 2000;
+
+function validateSignup({ email, username, password, reason }) {
+  const stated = String(reason || '').trim();
+  if (stated.length < REASON_MIN) {
+    return `Tell us why you want an account (at least ${REASON_MIN} characters).`;
+  }
+  if (stated.length > REASON_MAX) return `Please keep your request under ${REASON_MAX} characters.`;
   if (typeof email !== 'string' || email.length < 3 || email.length > 254 ||
       /\s/.test(email) || !/^[^@]+@[^@]+\.[^@]+$/.test(email)) return 'Enter a valid email address.';
   // In allowlist mode the allowlist is the whole policy: an approved domain is

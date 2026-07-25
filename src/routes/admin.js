@@ -23,6 +23,7 @@ const getUser = db.prepare('SELECT * FROM users WHERE id = ?');
 const setStatus = db.prepare('UPDATE users SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?');
 const setRole = db.prepare('UPDATE users SET role = ? WHERE id = ?');
 const setRank = db.prepare("UPDATE users SET rank = ? WHERE id = ? AND rank != 'owner'");
+const setDecisionNotes = db.prepare('UPDATE users SET decision_note = ?, decision_internal_note = ? WHERE id = ?');
 const setUserLimits = db.prepare('UPDATE users SET upload_max_bytes = ?, storage_limit_bytes = ? WHERE id = ?');
 const listUserImages = db.prepare('SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
 const getUserImage = db.prepare('SELECT * FROM images WHERE owner_id = ? AND token = ? AND deleted_at IS NULL');
@@ -190,12 +191,40 @@ router.post('/admin/reports/:id/status', requireAdmin, verifyCsrf, (req, res) =>
   res.redirect('/admin/reports');
 });
 
+// Optional note from the admin, passed through to the applicant's email.
+function decisionNote(req) {
+  return String(req.body.note || '').trim().slice(0, 1000);
+}
+
+// Optional internal note. Never leaves the admin surfaces: it is recorded in the
+// audit log and, for a deny-and-ban, stored as the ban reason. Kept separate
+// from decisionNote so that what an admin writes for colleagues can never be
+// mailed to the applicant by accident.
+function internalNote(req) {
+  return String(req.body.internal_note || '').trim().slice(0, 1000);
+}
+
+function subject(u) {
+  return `${u.username} <${u.email}> (#${u.id})`;
+}
+
+// Both texts are kept on the account as the current decision, and on the audit
+// row as the decision at that moment, so neither is lost when the next one
+// overwrites it.
+function recordDecision(req, u, action, extra = '') {
+  const note = decisionNote(req);
+  const internal = internalNote(req);
+  setDecisionNotes.run(note || null, internal || null, u.id);
+  audit.record(req.user, action, subject(u) + extra, u.id, { note, internalNote: internal });
+  return { note, internal };
+}
+
 router.post('/admin/users/:id/approve', requireAdmin, verifyCsrf, (req, res) => {
   const u = getUser.get(req.params.id);
   if (u && u.status === 'pending') {
     setStatus.run('approved', Date.now(), req.user.id, u.id);
-    audit.record(req.user, 'approve_user', `${u.username} <${u.email}> (#${u.id})`);
-    notify.sendSignupStatus(u, 'approved').catch(() => {});
+    const { note } = recordDecision(req, u, 'approve_user');
+    notify.sendSignupStatus(u, 'approved', note).catch(() => {});
   }
   res.redirect('/admin/users');
 });
@@ -204,10 +233,67 @@ router.post('/admin/users/:id/reject', requireAdmin, verifyCsrf, (req, res) => {
   const u = getUser.get(req.params.id);
   if (u && u.id !== req.user.id && u.rank !== 'owner') {
     setStatus.run('rejected', null, req.user.id, u.id);
-    audit.record(req.user, 'reject_user', `${u.username} <${u.email}> (#${u.id})`);
-    notify.sendSignupStatus(u, 'rejected').catch(() => {});
+    const { note } = recordDecision(req, u, 'reject_user');
+    notify.sendSignupStatus(u, 'rejected', note).catch(() => {});
   }
   res.redirect('/admin/users');
+});
+
+// Deny and ban the address in one step, for applications that are plainly spam.
+router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, (req, res) => {
+  const u = getUser.get(req.params.id);
+  if (u && u.id !== req.user.id && u.rank !== 'owner') {
+    // The ban reason is the internal note, never the message the applicant gets.
+    const banReason = internalNote(req) || `rejected signup ${u.username}`;
+    setStatus.run('rejected', null, req.user.id, u.id);
+    bans.add({
+      kind: 'email',
+      value: String(u.email || '').trim().toLowerCase(),
+      block_account: 1,
+      block_view: 0,
+      reason: banReason,
+      created_by: req.user.id,
+      expires_at: null,
+    });
+    bans.add({
+      kind: 'user',
+      value: u.id,
+      block_account: 1,
+      block_view: 0,
+      reason: banReason,
+      created_by: req.user.id,
+      expires_at: null,
+    });
+    const { note } = recordDecision(req, u, 'reject_ban_user', ' + email ban');
+    notify.sendSignupStatus(u, 'banned', note).catch(() => {});
+  }
+  res.redirect('/admin/users');
+});
+
+// Owner-only reversal of a signup decision, from the user list or the audit log.
+// Overriding an approval or a deny-and-ban also clears the bans that decision
+// created, otherwise a reinstated account still could not log in.
+const OVERRIDE_DECISIONS = new Set(['approved', 'rejected']);
+router.post('/admin/users/:id/override', requireOwner, verifyCsrf, (req, res) => {
+  const u = getUser.get(req.params.id);
+  const decision = OVERRIDE_DECISIONS.has(req.body.decision) ? req.body.decision : null;
+  if (!u || !decision) {
+    return res.status(404).render('error', { title: 'Not found', message: 'No such user or decision.' });
+  }
+  const back = req.body.back === 'audit' ? '/admin/audit' : '/admin/users';
+  if (u.status === decision) return res.redirect(back);
+
+  setStatus.run(decision, decision === 'approved' ? Date.now() : null, req.user.id, u.id);
+  if (decision === 'approved') {
+    bans.removeMatching('user', u.id);
+    bans.removeMatching('email', String(u.email || '').trim().toLowerCase());
+  }
+  const { note } = recordDecision(
+    req, u,
+    decision === 'approved' ? 'override_approve_user' : 'override_reject_user'
+  );
+  notify.sendSignupStatus(u, decision, note).catch(() => {});
+  res.redirect(back);
 });
 
 router.post('/admin/users/:id/rank', requireAdmin, verifyCsrf, (req, res) => {

@@ -22,7 +22,10 @@ function cleanFrom(value) {
 // Notify admins that a new account is awaiting approval. Uses Resend if
 // configured; otherwise logs to the server console. Never throws.
 async function notifyPendingSignup(user) {
-  const line = `[NamelessUnSee] New signup awaiting approval: ${user.username} <${user.email}> (id ${user.id})`;
+  // The applicant's written case for wanting an account, so an admin can judge
+  // the request from the notification itself.
+  const reason = String(user.signup_reason || '').trim();
+  const line = `[NamelessUnSee] New signup awaiting approval: ${user.username} <${user.email}> (id ${user.id})${reason ? `\n  Reason: ${reason}` : ''}`;
   const { apiKey, to } = config.resend;
   const from = cleanFrom(config.resend.from);
 
@@ -45,7 +48,13 @@ async function notifyPendingSignup(user) {
         text:
           `A new account is awaiting admin approval.\n\n` +
           `Username: ${user.username}\nEmail: ${user.email}\n\n` +
+          `Why they want an account:\n${reason || '(not provided)'}\n\n` +
           `Approve or reject at: ${config.baseUrl}/admin\n`,
+        html:
+          `<p>A new account is awaiting admin approval.</p>` +
+          `<p><strong>Username:</strong> ${escapeHtml(user.username)}<br><strong>Email:</strong> ${escapeHtml(user.email)}</p>` +
+          `<p><strong>Why they want an account:</strong></p><p style="white-space:pre-wrap">${escapeHtml(reason || '(not provided)')}</p>` +
+          `<p><a href="${escapeHtml(config.baseUrl + '/admin')}">Approve or reject</a></p>`,
       }),
     });
     if (!res.ok) {
@@ -137,7 +146,14 @@ async function notifyAdminReport(report) {
 // Notify a new user about their account approval state. Uses the same
 // transactional sender as the existing admin and security notifications.
 // Never throws so account state changes are not held up by email delivery.
-async function sendSignupStatus(user, status) {
+// `note` is an optional message written by the admin making the decision. It is
+// appended to the body verbatim (escaped for the HTML part) so the applicant is
+// told why, rather than receiving a bare decision.
+async function sendSignupStatus(user, status, note = '') {
+  const adminNote = String(note || '').trim().slice(0, 1000);
+  // Where a denied applicant should write for more information. Configured as
+  // OPERATOR_CONTACT, the same address the legal pages publish.
+  const contact = String(config.operator.contact || '').trim();
   const messages = {
     pending: {
       subject: 'NamelessUnSee account pending approval',
@@ -159,6 +175,19 @@ async function sendSignupStatus(user, status) {
       ].join('\n'),
       html: `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee account has been approved.</p><p><a href="${escapeHtml(config.baseUrl + '/login')}">Log in to NamelessUnSee</a> to start using the service.</p>`,
     },
+    banned: {
+      subject: 'NamelessUnSee account not approved',
+      text: [
+        `Hi ${user.username},`,
+        '',
+        'Your NamelessUnSee account was not approved, and this email address has been blocked from registering again.',
+        ...(contact ? ['', `If you believe this was a mistake, email ${contact}.`] : []),
+      ].join('\n'),
+      html: `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee account was not approved, and this email address has been blocked from registering again.</p>` +
+        (contact
+          ? `<p>If you believe this was a mistake, email <a href="mailto:${escapeHtml(contact)}">${escapeHtml(contact)}</a>.</p>`
+          : ''),
+    },
     rejected: {
       subject: 'NamelessUnSee account not approved',
       text: [
@@ -166,17 +195,28 @@ async function sendSignupStatus(user, status) {
         '',
         'Your NamelessUnSee account was not approved.',
         'You will not be able to log in with this account.',
+        ...(contact ? ['', `If you would like more information, or believe this was a mistake, email ${contact}.`] : []),
       ].join('\n'),
-      html: `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee account was not approved.</p><p>You will not be able to log in with this account.</p>`,
+      html: `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee account was not approved.</p><p>You will not be able to log in with this account.</p>` +
+        (contact
+          ? `<p>If you would like more information, or believe this was a mistake, email <a href="mailto:${escapeHtml(contact)}">${escapeHtml(contact)}</a>.</p>`
+          : ''),
     },
   };
-  const message = messages[status];
-  if (!message) return false;
+  const base = messages[status];
+  if (!base) return false;
+  const message = adminNote
+    ? {
+      subject: base.subject,
+      text: `${base.text}\n\nMessage from the administrator:\n${adminNote}\n`,
+      html: `${base.html}<p><strong>Message from the administrator:</strong></p><p style="white-space:pre-wrap">${escapeHtml(adminNote)}</p>`,
+    }
+    : base;
 
   const { apiKey } = config.resend;
   const from = cleanFrom(config.resend.from);
   if (!apiKey || !from || !user.email) {
-    console.log(`[NamelessUnSee] Signup status for ${user.email}: ${status}`);
+    console.log(`[NamelessUnSee] Signup status for ${user.email}: ${status}${adminNote ? ` - ${adminNote}` : ''}`);
     return false;
   }
 
@@ -201,12 +241,19 @@ async function sendSignupVerification(user, code) {
   const { apiKey } = config.resend;
   const from = cleanFrom(config.resend.from);
   const subject = 'NamelessUnSee email verification code';
+  // One-click link, like the login code email. It only works in the browser that
+  // started the signup, because the challenge is held in a signed cookie there.
+  const link = `${config.baseUrl}/signup/verify/email?token=${encodeURIComponent(code)}`;
   const text = [
     `Hi ${user.username},`, '',
     `Your NamelessUnSee email verification code is ${code}.`,
     'It expires in 5 minutes.',
+    '',
+    'Or verify in one click, in the browser you signed up with:',
+    link,
   ].join('\n');
-  const html = `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee email verification code is <strong>${escapeHtml(code)}</strong>.</p><p>It expires in 5 minutes.</p>`;
+  const html = `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee email verification code is <strong>${escapeHtml(code)}</strong>.</p><p>It expires in 5 minutes.</p>` +
+    `<p><a href="${escapeHtml(link)}">Verify my email address</a><br><span style="color:#8b949e">This link only works in the browser you signed up with.</span></p>`;
   if (!apiKey || !from) {
     if (config.twofa.consoleFallback) {
       console.log(`[NamelessUnSee] Signup verification for ${user.email}: ${code}`);

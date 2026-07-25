@@ -128,7 +128,7 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
 
   // First signup -> auto-approved regular user, logged in
   const sol = await solveAltcha(req);
-  r = await req('/signup', form({ email: 'first@example.invalid', username: 'firstuser', password: 'password1234', altcha: sol }));
+  r = await req('/signup', form({ email: 'first@example.invalid', username: 'firstuser', password: 'password1234', reason: 'Founding operator account for this instance.', altcha: sol }));
   assert.equal(r.status, 302, 'first signup redirects');
   assert.ok(jar.has('sid'), 'first user logged in');
   // ...and is NOT an admin

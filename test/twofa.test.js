@@ -28,9 +28,11 @@ const { totpCode } = require('../src/twofa');
 const { uuidv7 } = require('../src/util/crypto');
 
 let lastEmail;
+const sentEmails = [];
 global.fetch = async (url, options) => {
   if (url === 'https://api.resend.com/emails') {
     lastEmail = JSON.parse(options.body);
+    sentEmails.push(lastEmail);
     return new Response('', { status: 200 });
   }
   throw new Error('unexpected fetch: ' + url);
@@ -274,4 +276,230 @@ test('account deletion rejects a bad password, a bad code, and the owner account
   r = await ownerReq('/account/security/delete/start', form({ _csrf: ownerCsrf, password: 'password1234', altcha: await solveAltcha(ownerReq) }));
   assert.match(await r.text(), /owner account cannot be deleted/i);
   assert.ok(db.prepare('SELECT 1 FROM users WHERE username = ?').get('ownerdel'), 'owner survives');
+});
+
+test('signup decisions carry an admin message; deny+ban blocks and notifies', async () => {
+  const bans = require('../src/bans');
+  const now = Date.now();
+  const seedPending = (username, email) => {
+    const id = uuidv7(now);
+    db.prepare(
+      `INSERT INTO users (id, email, username, password_hash, role, status, created_at, email_verified)
+       VALUES (?, ?, ?, ?, 'user', 'pending', ?, 1)`
+    ).run(id, email, username, hashPassword('password1234'), now);
+    return id;
+  };
+  const approveMe = seedPending('pendok', 'pendok@example.test');
+  const denyMe = seedPending('penddeny', 'penddeny@example.test');
+  const banMe = seedPending('pendspam', 'pendspam@example.test');
+
+  db.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at, email_verified)
+     VALUES (?, ?, ?, ?, 'admin', 'approved', ?, ?, 1)`
+  ).run(uuidv7(now), 'decider@example.test', 'decider', hashPassword('password1234'), now, now);
+
+  const jar = newJar();
+  const req = makeReq(app, jar);
+  await consent(req, '/');
+  const altcha = await solveAltcha(req);
+  let r = await req('/login', form({ identifier: 'decider', password: 'password1234', altcha, next: '/dashboard' }));
+  const code = (lastEmail.text.match(/code is (\d{6})/) || [])[1];
+  await req('/login/2fa', form({ _csrf: csrfFrom(await r.text()), code, next: '/dashboard' }));
+
+  const usersHtml = await (await req('/admin/users')).text();
+  const csrf = csrfFrom(usersHtml);
+  assert.match(usersHtml, /name="note"/, 'pending rows expose a message field');
+
+  // Approve with a message: it reaches the applicant's email.
+  lastEmail = null;
+  assert.equal((await req(`/admin/users/${approveMe}/approve`, form({ _csrf: csrf, note: 'Welcome aboard, verified via Discord.' }))).status, 302);
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(approveMe).status, 'approved');
+  assert.equal(lastEmail.to[0], 'pendok@example.test');
+  assert.match(lastEmail.subject, /approved/i);
+  assert.match(lastEmail.text, /Welcome aboard, verified via Discord\./);
+  assert.match(lastEmail.html, /Welcome aboard, verified via Discord\./);
+
+  // Deny with a message.
+  lastEmail = null;
+  assert.equal((await req(`/admin/users/${denyMe}/reject`, form({ _csrf: csrf, note: 'Could not verify your identity.' }))).status, 302);
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(denyMe).status, 'rejected');
+  assert.match(lastEmail.text, /Could not verify your identity\./);
+
+  // HTML in a note is escaped rather than injected into the email body.
+  lastEmail = null;
+  const escapeMe = seedPending('pendhtml', 'pendhtml@example.test');
+  await req(`/admin/users/${escapeMe}/reject`, form({ _csrf: csrf, note: '<script>alert(1)</script>' }));
+  assert.ok(!lastEmail.html.includes('<script>'), 'note is escaped in the HTML part');
+  assert.match(lastEmail.html, /&lt;script&gt;/);
+
+  // Deny + ban: address is blocked, and the applicant is told they are banned.
+  // The internal note is kept away from the email and used as the ban reason.
+  lastEmail = null;
+  assert.equal((await req(`/admin/users/${banMe}/reject-ban`, form({
+    _csrf: csrf,
+    note: 'Automated signup flood.',
+    internal_note: 'Matches the botnet pattern from last week; do not reinstate.',
+  }))).status, 302);
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(banMe).status, 'rejected');
+  assert.equal(lastEmail.to[0], 'pendspam@example.test');
+  assert.match(lastEmail.text, /blocked from registering again/);
+  assert.match(lastEmail.text, /Automated signup flood\./);
+  assert.ok(!lastEmail.text.includes('botnet pattern'), 'internal note never reaches the applicant');
+  assert.ok(!lastEmail.html.includes('botnet pattern'), 'internal note never reaches the applicant');
+  assert.ok(bans.emailBan('pendspam@example.test').account, 'email is account-banned');
+  assert.ok(bans.userBan(banMe).account, 'user id is account-banned');
+  // The ban reason an admin sees is the internal note, not the emailed message.
+  const banRow = bans.list().find((b) => b.kind === 'email' && b.value === 'pendspam@example.test');
+  assert.equal(banRow.reason, 'Matches the botnet pattern from last week; do not reinstate.');
+  // Both texts are stored as their own columns, on the audit row and the account.
+  const logged = db.prepare("SELECT note, internal_note, target_id FROM audit_log WHERE action = 'reject_ban_user' ORDER BY id DESC LIMIT 1").get();
+  assert.equal(logged.note, 'Automated signup flood.');
+  assert.equal(logged.internal_note, 'Matches the botnet pattern from last week; do not reinstate.');
+  assert.equal(logged.target_id, banMe);
+  const stored = db.prepare('SELECT decision_note, decision_internal_note FROM users WHERE id = ?').get(banMe);
+  assert.equal(stored.decision_note, 'Automated signup flood.');
+  assert.equal(stored.decision_internal_note, 'Matches the botnet pattern from last week; do not reinstate.');
+  // Both are visible to admins in the account list.
+  const listHtml = await (await req('/admin/users')).text();
+  assert.match(listHtml, /Automated signup flood\./);
+  assert.match(listHtml, /botnet pattern/);
+});
+
+test('signup requires a stated reason, which reaches the admin notification and queue', async () => {
+  const config = require('../src/config');
+  const previousTo = config.resend.to;
+  config.resend.to = 'admins@example.test';
+  const jar = newJar();
+  const req = makeReq(app, jar);
+  await consent(req, '/');
+
+  // Too short a case is refused, and no account is created.
+  let r = await req('/signup', form({
+    email: 'why@example.test', username: 'whyuser', password: 'password1234',
+    reason: 'gimme', altcha: await solveAltcha(req),
+  }));
+  assert.equal(r.status, 400);
+  assert.match(await r.text(), /why you want an account/i);
+  assert.equal(db.prepare('SELECT 1 FROM users WHERE username = ?').get('whyuser'), undefined);
+
+  // A real one is stored, mailed to the admins and shown in the queue.
+  const reason = 'I run a small photography collective and need traceable previews for clients.';
+  sentEmails.length = 0;
+  r = await req('/signup', form({
+    email: 'why@example.test', username: 'whyuser', password: 'password1234',
+    reason, altcha: await solveAltcha(req),
+  }));
+  assert.equal(r.status, 200);
+  const created = db.prepare('SELECT id, signup_reason, status FROM users WHERE username = ?').get('whyuser');
+  assert.equal(created.status, 'pending');
+  assert.equal(created.signup_reason, reason);
+  const adminMail = sentEmails.find((m) => m.to[0] === 'admins@example.test');
+  assert.ok(adminMail, 'admins are notified of the request');
+  assert.match(adminMail.text, /Why they want an account/);
+  assert.match(adminMail.text, /photography collective/);
+  assert.match(adminMail.html, /photography collective/);
+
+  const admin = makeReq(app, newJar());
+  await consent(admin, '/');
+  const altcha = await solveAltcha(admin);
+  const lr = await admin('/login', form({ identifier: 'decider', password: 'password1234', altcha, next: '/dashboard' }));
+  const code = (lastEmail.text.match(/code is (\d{6})/) || [])[1];
+  await admin('/login/2fa', form({ _csrf: csrfFrom(await lr.text()), code, next: '/dashboard' }));
+  assert.match(await (await admin('/admin/users')).text(), /photography collective/, 'reason shown in the approval queue');
+  config.resend.to = previousTo;
+});
+
+test('rejection points the applicant at the operator contact; owner can override either way', async () => {
+  const now = Date.now();
+  const targetId = uuidv7(now);
+  db.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, status, created_at, email_verified)
+     VALUES (?, ?, ?, ?, 'user', 'pending', ?, 1)`
+  ).run(targetId, 'appeal@example.test', 'appealuser', hashPassword('password1234'), now);
+  const ownerId = uuidv7(now);
+  db.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, rank, status, created_at, approved_at, email_verified)
+     VALUES (?, ?, ?, ?, 'admin', 'owner', 'approved', ?, ?, 1)`
+  ).run(ownerId, 'boss2@example.test', 'boss2', hashPassword('password1234'), now, now);
+
+  const login = async (username) => {
+    const req = makeReq(app, newJar());
+    await consent(req, '/');
+    const altcha = await solveAltcha(req);
+    const r = await req('/login', form({ identifier: username, password: 'password1234', altcha, next: '/dashboard' }));
+    const code = (lastEmail.text.match(/code is (\d{6})/) || [])[1];
+    await req('/login/2fa', form({ _csrf: csrfFrom(await r.text()), code, next: '/dashboard' }));
+    return req;
+  };
+
+  // An ordinary admin denies; the email tells them where to appeal.
+  const adminReq = await login('decider');
+  const csrf = csrfFrom(await (await adminReq('/admin/users')).text());
+  lastEmail = null;
+  await adminReq(`/admin/users/${targetId}/reject`, form({ _csrf: csrf }));
+  const contact = require('../src/config').operator.contact;
+  assert.ok(contact, 'operator contact is configured for this test instance');
+  assert.match(lastEmail.text, new RegExp(contact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(lastEmail.html, /mailto:/);
+
+  // An admin cannot override; only the owner can.
+  assert.equal((await adminReq(`/admin/users/${targetId}/override`, form({ _csrf: csrf, decision: 'approved' }))).status, 403);
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(targetId).status, 'rejected');
+
+  // The owner reinstates from the user list, and the ban from a deny+ban is lifted.
+  const bans = require('../src/bans');
+  bans.add({ kind: 'email', value: 'appeal@example.test', block_account: 1, block_view: 0, created_by: ownerId, expires_at: null });
+  const ownerReq = await login('boss2');
+  const ocsrf = csrfFrom(await (await ownerReq('/admin/users')).text());
+  lastEmail = null;
+  assert.equal((await ownerReq(`/admin/users/${targetId}/override`, form({ _csrf: ocsrf, decision: 'approved', note: 'Vouched for by a moderator.' }))).status, 302);
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(targetId).status, 'approved');
+  assert.ok(!bans.emailBan('appeal@example.test').account, 'override clears the email ban');
+  assert.match(lastEmail.text, /Vouched for by a moderator\./);
+
+  // ...and can reverse an approval too, returning to the audit log it came from.
+  const r = await ownerReq(`/admin/users/${targetId}/override`, form({ _csrf: ocsrf, decision: 'rejected', back: 'audit' }));
+  assert.equal(r.headers.get('location'), '/admin/audit');
+  assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(targetId).status, 'rejected');
+  // The audit log carries the target, which is what the log's override button uses.
+  const entry = db.prepare("SELECT target_id FROM audit_log WHERE action = 'override_reject_user' ORDER BY id DESC LIMIT 1").get();
+  assert.equal(entry.target_id, targetId);
+});
+
+test('signup verification email carries a one-click link bound to the signup browser', async () => {
+  const config = require('../src/config');
+  const previous = config.emailVerificationRequired;
+  config.emailVerificationRequired = true;
+  try {
+    const jar = newJar();
+    const req = makeReq(app, jar);
+    await consent(req, '/');
+    lastEmail = null;
+    const r = await req('/signup', form({
+      email: 'linkverify@example.test', username: 'linkverify', password: 'password1234',
+      reason: 'I need traceable previews for a client review workflow.', altcha: await solveAltcha(req),
+    }));
+    assert.equal(r.status, 200);
+    assert.match(await r.text(), /verification/i);
+    assert.equal(db.prepare('SELECT email_verified FROM users WHERE username = ?').get('linkverify').email_verified, 0);
+
+    // The email offers both a code and a link, as the login email does.
+    assert.match(lastEmail.text, /code is \d{6}/);
+    const link = (lastEmail.text.match(/(http[^\s]+\/signup\/verify\/email\?token=[^\s]+)/) || [])[1];
+    assert.ok(link, 'verification email includes a link');
+    assert.match(lastEmail.html, /signup\/verify\/email\?token=/);
+    const url = new URL(link);
+
+    // The link is useless in a browser that did not start the signup.
+    assert.equal((await makeReq(app, newJar())(url.pathname + url.search)).status, 403);
+    assert.equal(db.prepare('SELECT email_verified FROM users WHERE username = ?').get('linkverify').email_verified, 0);
+
+    // In the original browser it completes verification and queues the account.
+    const done = await req(url.pathname + url.search);
+    assert.equal(done.status, 200);
+    assert.equal(db.prepare('SELECT email_verified FROM users WHERE username = ?').get('linkverify').email_verified, 1);
+    assert.equal(db.prepare('SELECT status FROM users WHERE username = ?').get('linkverify').status, 'pending');
+  } finally {
+    config.emailVerificationRequired = previous;
+  }
 });

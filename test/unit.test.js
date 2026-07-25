@@ -131,7 +131,7 @@ test('email domains: allowlist mode admits only approved domains', () => {
     assert.equal(abuse.isAllowedEmail('a@notexample.com'), false, 'suffix confusion is not a match');
     assert.equal(abuse.isAllowedEmail('a@gmail.com'), false);
 
-    const ok = { username: 'abcd', password: 'password1234' };
+    const ok = { username: 'abcd', password: 'password1234', reason: 'I would like to share build photos privately.' };
     assert.equal(abuse.validateSignup({ ...ok, email: 'a@example.com' }), null);
     assert.match(abuse.validateSignup({ ...ok, email: 'a@gmail.com' }), /approved email domains/);
     // An approved domain wins even if a blocklist also names it.
@@ -143,7 +143,7 @@ test('email domains: allowlist mode admits only approved domains', () => {
     for (const domain of previous) allowlist.add(domain);
   }
   // Blocking resumes once allowlist mode is off again.
-  assert.match(abuse.validateSignup({ username: 'abcd', password: 'password1234', email: 'a@mailinator.com' }), /Disposable/);
+  assert.match(abuse.validateSignup({ username: 'abcd', password: 'password1234', reason: 'I would like to share build photos privately.', email: 'a@mailinator.com' }), /Disposable/);
 });
 
 test('device: UA parsing', () => {

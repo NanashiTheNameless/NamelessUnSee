@@ -55,8 +55,8 @@ const updateDefaults = db.prepare(
   'UPDATE users SET default_ttl = ?, default_timer_start = ?, default_max_views = ? WHERE id = ?'
 );
 const insertUser = db.prepare(
-  `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at, trust_until, email_verified)
-   VALUES (@id, @email, @username, @password_hash, @role, @status, @created_at, @approved_at, @trust_until, @email_verified)`
+  `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at, trust_until, email_verified, signup_reason)
+   VALUES (@id, @email, @username, @password_hash, @role, @status, @created_at, @approved_at, @trust_until, @email_verified, @signup_reason)`
 );
 const insertSignupVerification = db.prepare(
   `INSERT INTO recovery_challenges (id, user_id, kind, target, code_hash, csrf_token, created_at, expires_at)
@@ -252,11 +252,12 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
   const email = abuse.normalizeEmail(req.body.email);
   const username = (req.body.username || '').trim();
   const password = req.body.password || '';
-  const values = { email, username };
+  const reason = String(req.body.reason || '').trim();
+  const values = { email, username, reason };
 
   // Validate submitted fields before the CAPTCHA result. CAPTCHA is an abuse
   // signal, not a substitute for server-side input validation.
-  const validationError = abuse.validateSignup({ email, username, password });
+  const validationError = abuse.validateSignup({ email, username, password, reason });
   if (validationError) return res.status(400).render('signup', { error: validationError, values });
   if (abuse.registrationRisk(req)) {
     return res.status(429).render('signup', { error: 'Registration is temporarily throttled. Please try again later.', values });
@@ -291,9 +292,10 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
     approved_at: isFirst ? now : null,
     trust_until: now + config.abuse.newAccountTrustDelayMs,
     email_verified: config.emailVerificationRequired ? 0 : 1,
+    signup_reason: reason,
   });
 
-  const user = { id: userId, username, email, status: isFirst ? 'approved' : 'pending' };
+  const user = { id: userId, username, email, status: isFirst ? 'approved' : 'pending', signup_reason: reason };
   if (config.emailVerificationRequired) {
     const verification = await beginSignupVerification(res, user);
     if (!verification) {
@@ -313,6 +315,41 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
   notify.notifyPendingSignup(user).catch(() => {});
   notify.sendSignupStatus(user, 'pending').catch(() => {});
   res.render('signup-pending', {});
+});
+
+// Mark the address verified and continue: straight in if the account is already
+// approved, otherwise into the pending queue with the admins notified.
+function finishSignupVerification(req, res, challenge, user) {
+  setEmailVerified.run(user.id);
+  deleteRecovery.run(challenge.id);
+  clearSignupVerificationCookie(res);
+  if (user.status === 'approved') {
+    setLastIp.run(geo.clientIp(req) || null, user.id);
+    createSession(res, user.id);
+    return res.redirect('/dashboard');
+  }
+  notify.notifyPendingSignup(user).catch(() => {});
+  notify.sendSignupStatus(user, 'pending').catch(() => {});
+  return res.render('signup-pending', {});
+}
+
+// Finish the verification in one click from the email. Like the login link, it
+// is bound to the browser that started the signup: the challenge id lives in a
+// signed cookie, so the token alone is useless elsewhere.
+router.get('/signup/verify/email', limiters.login, widgetPage, (req, res) => {
+  const challenge = signupVerificationFromRequest(req);
+  const token = typeof req.query.token === 'string' ? req.query.token : '';
+  const user = challenge && getUserById.get(challenge.user_id);
+  const valid = challenge && user && challenge.kind === 'signup_email' &&
+    challenge.attempts < 5 && otpHash(token) === challenge.code_hash;
+  if (!valid) {
+    if (challenge) incrementRecoveryAttempts.run(challenge.id);
+    return res.status(403).render('signup', {
+      error: 'This verification link is invalid, expired, or belongs to another browser.',
+      values: {},
+    });
+  }
+  return finishSignupVerification(req, res, challenge, user);
 });
 
 router.post('/signup/verify', limiters.login, widgetPage, (req, res) => {
@@ -335,17 +372,7 @@ router.post('/signup/verify', limiters.login, widgetPage, (req, res) => {
     clearSignupVerificationCookie(res);
     return res.status(403).render('signup', { error: 'This signup is no longer available.', values: {} });
   }
-  setEmailVerified.run(user.id);
-  deleteRecovery.run(challenge.id);
-  clearSignupVerificationCookie(res);
-  if (user.status === 'approved') {
-    setLastIp.run(geo.clientIp(req) || null, user.id);
-    createSession(res, user.id);
-    return res.redirect('/dashboard');
-  }
-  notify.notifyPendingSignup(user).catch(() => {});
-  notify.sendSignupStatus(user, 'pending').catch(() => {});
-  return res.render('signup-pending', {});
+  return finishSignupVerification(req, res, challenge, user);
 });
 
 // --- Account recovery -----------------------------------------------------

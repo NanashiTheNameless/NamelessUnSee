@@ -11,24 +11,30 @@
       <p class="muted">No accounts awaiting approval.</p>
     <% } else { %>
       <div class="scroll"><table>
-        <thead><tr><th>Username</th><th>Email</th><th>Requested</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Username</th><th>Email</th><th>Why they want an account</th><th>Requested</th><th>Actions</th></tr></thead>
         <tbody>
         <% pending.forEach(function(u){ %>
           <tr>
             <td class="mono"><%= u.username %></td>
             <td class="mono"><%= u.email %></td>
+            <td style="white-space:pre-wrap; max-width:26rem"><%= u.signup_reason || '' %><% if (!u.signup_reason) { %><span class="muted">(not provided)</span><% } %></td>
             <td class="muted"><%= new Date(u.created_at).toISOString().slice(0,16).replace('T',' ') %></td>
             <td>
-              <div style="display:flex; gap:.4rem">
-                <form method="post" action="/admin/users/<%= u.id %>/approve">
-                  <input type="hidden" name="_csrf" value="<%= csrf %>">
+              <form method="post" action="/admin/users/<%= u.id %>/approve" style="display:grid; gap:.4rem; min-width:19rem">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <label class="muted" for="note-<%= u.id %>" style="font-weight:400; margin:0">Message to the applicant <span class="muted">(optional)</span></label>
+                <textarea id="note-<%= u.id %>" name="note" rows="2" maxlength="1000" placeholder="Why this was approved, denied or banned"></textarea>
+                <p class="muted" style="margin:0; font-size:.82rem">Emailed to the applicant with any of the three decisions.</p>
+                <label class="muted" for="internal-<%= u.id %>" style="font-weight:400; margin:.2rem 0 0">Internal note <span class="muted">(optional, never sent)</span></label>
+                <textarea id="internal-<%= u.id %>" name="internal_note" rows="2" maxlength="1000" placeholder="For other admins only"></textarea>
+                <p class="muted" style="margin:0; font-size:.82rem">Recorded in the audit log. On Deny &amp; ban it becomes the ban reason shown in the Bans tab.</p>
+                <div style="display:flex; gap:.4rem; flex-wrap:wrap">
                   <button class="btn small" type="submit">Approve</button>
-                </form>
-                <form method="post" action="/admin/users/<%= u.id %>/reject">
-                  <input type="hidden" name="_csrf" value="<%= csrf %>">
-                  <button class="btn danger small" type="submit">Deny</button>
-                </form>
-              </div>
+                  <button class="btn danger small" type="submit" formaction="/admin/users/<%= u.id %>/reject">Deny</button>
+                  <button class="btn danger small" type="submit" formaction="/admin/users/<%= u.id %>/reject-ban"
+                          onclick="return confirm('Deny this account and permanently ban the email address? The applicant is emailed, and only an owner can reverse it.')">Deny &amp; ban email</button>
+                </div>
+              </form>
             </td>
           </tr>
         <% }); %>
@@ -93,6 +99,12 @@
           <td>
             <span class="pill <%= u.status %>"><%= u.status %></span>
             <% if (u.ban.account || u.ban.view) { %><span class="pill rejected">banned</span><% } %>
+            <% if (u.decision_note) { %>
+              <div class="muted" style="white-space:pre-wrap; font-size:.8rem; margin-top:.3rem">Sent: <%= u.decision_note %></div>
+            <% } %>
+            <% if (u.decision_internal_note) { %>
+              <div class="muted" style="white-space:pre-wrap; font-size:.8rem; margin-top:.3rem">Internal: <%= u.decision_internal_note %></div>
+            <% } %>
           </td>
           <td>
             <% if (u.rank !== 'owner') { %>
@@ -111,6 +123,14 @@
               <input type="number" name="storage_limit_mb" min="1" max="1048576" placeholder="Storage MB" value="<%= u.storage_limit_bytes ? Math.round(u.storage_limit_bytes / 1048576) : '' %>">
               <button class="btn secondary small" type="submit">Set Limits</button>
             </form>
+            <% if (me.rank === 'owner' && u.id !== me.id && u.status === 'rejected') { %>
+              <form method="post" action="/admin/users/<%= u.id %>/override" style="display:grid; gap:.25rem; margin-bottom:.35rem">
+                <input type="hidden" name="_csrf" value="<%= csrf %>">
+                <input type="hidden" name="decision" value="approved">
+                <input type="text" name="note" maxlength="1000" placeholder="Message to the applicant (optional)">
+                <div><button class="btn small" type="submit">Override: approve</button></div>
+              </form>
+            <% } %>
             <% if (u.id !== me.id && me.rank === 'owner') { %>
               <div style="display:flex; gap:.4rem; flex-wrap:wrap">
                 <% if (u.status === 'approved' && u.role !== 'admin') { %>
@@ -244,9 +264,21 @@
             <td class="muted"><%= new Date(a.created_at).toISOString().replace('T',' ').replace(/\..+/,' UTC') %></td>
             <td class="mono"><%= a.actor_name || ('#' + (a.actor_id || '?')) %></td>
             <td><span class="pill"><%= a.action %></span></td>
-            <td class="muted mono" style="font-size:.82rem"><%= a.detail || '' %></td>
+            <td class="muted mono" style="font-size:.82rem"><%= a.detail || '' %>
+              <% if (a.note) { %><div style="white-space:pre-wrap; margin-top:.25rem">Sent: <%= a.note %></div><% } %>
+              <% if (a.internal_note) { %><div style="white-space:pre-wrap; margin-top:.25rem">Internal: <%= a.internal_note %></div><% } %>
+            </td>
             <% if (me.rank === 'owner') { %>
               <td>
+                <% if (a.target_id && ['approve_user','reject_user','reject_ban_user','override_approve_user','override_reject_user'].indexOf(a.action) !== -1) { %>
+                  <form method="post" action="/admin/users/<%= a.target_id %>/override" style="display:flex; gap:.3rem; flex-wrap:wrap; margin-bottom:.35rem">
+                    <input type="hidden" name="_csrf" value="<%= csrf %>">
+                    <input type="hidden" name="back" value="audit">
+                    <input type="text" name="note" maxlength="1000" placeholder="Message (optional)" style="min-width:9rem">
+                    <button class="btn small" type="submit" name="decision" value="approved">Approve</button>
+                    <button class="btn danger small" type="submit" name="decision" value="rejected">Deny</button>
+                  </form>
+                <% } %>
                 <form method="post" action="/admin/audit/<%= a.id %>/delete" onsubmit="return confirm('Delete this audit-log entry permanently?')">
                   <input type="hidden" name="_csrf" value="<%= csrf %>">
                   <button class="btn danger small" type="submit">Delete</button>

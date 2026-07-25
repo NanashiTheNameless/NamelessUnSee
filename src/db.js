@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS users (
   rank          TEXT NOT NULL DEFAULT 'user',     -- 'user' | 'trusted' | 'owner'
   status        TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'rejected'
   email_verified INTEGER NOT NULL DEFAULT 1,
+  signup_reason TEXT,
+  decision_note TEXT,          -- last decision message sent to this user
+  decision_internal_note TEXT, -- last decision note for administrators only
   created_at    INTEGER NOT NULL,
   approved_at   INTEGER,
   approved_by   TEXT REFERENCES users(id)
@@ -117,6 +120,11 @@ CREATE TABLE IF NOT EXISTS audit_log (
   actor_name TEXT,
   action     TEXT NOT NULL,
   detail     TEXT,
+  -- The user acted upon, when there is one. Deliberately not a foreign key: the
+  -- log must survive the deletion of the account it describes.
+  target_id  TEXT,
+  note          TEXT,  -- message sent to the user
+  internal_note TEXT,  -- administrators only; never sent
   created_at INTEGER NOT NULL
 );
 
@@ -286,6 +294,12 @@ addColumn('images', 'max_views', 'max_views INTEGER');
 addColumn('images', 'first_viewed_at', 'first_viewed_at INTEGER');
 addColumn('images', 'view_count', 'view_count INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'last_ip', 'last_ip TEXT');
+addColumn('audit_log', 'target_id', 'target_id TEXT');
+addColumn('audit_log', 'note', 'note TEXT');
+addColumn('audit_log', 'internal_note', 'internal_note TEXT');
+addColumn('users', 'decision_note', 'decision_note TEXT');
+addColumn('users', 'decision_internal_note', 'decision_internal_note TEXT');
+addColumn('users', 'signup_reason', 'signup_reason TEXT');
 addColumn('users', 'trust_until', 'trust_until INTEGER');
 addColumn('users', 'email_verified', 'email_verified INTEGER NOT NULL DEFAULT 1');
 addColumn('users', 'twofa_mode', "twofa_mode TEXT NOT NULL DEFAULT 'email'");
