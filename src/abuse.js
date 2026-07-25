@@ -32,21 +32,23 @@ function keyFor(req) {
   return geo.clientIp(req) || 'unknown';
 }
 
-function recordSignup(req, email) {
+function recordSignup(req) {
   const now = Date.now();
   const key = keyFor(req);
   const old = activity.get(key) || [];
   const events = old.filter((e) => e.at > now - WINDOW_MS);
-  events.push({ at: now, email: emailDomain(email) });
+  events.push({ at: now });
   activity.set(key, events.slice(-MAX_EVENTS));
 }
 
-function registrationRisk(req, email) {
+// Volume from one network only. The mail domain deliberately plays no part:
+// a household, office or campus behind one address legitimately registers with
+// whatever mix of providers its people use, and counting distinct domains
+// throttled exactly that. Individual addresses are still capped by the
+// signup-email limiter, and the domain itself is never a bucket.
+function registrationRisk(req) {
   const events = (activity.get(keyFor(req)) || []).filter((e) => e.at > Date.now() - WINDOW_MS);
-  const domains = new Set(events.map((e) => e.email).filter(Boolean));
-  // Multiple accounts for multiple domains from one network in a short period
-  // is a useful abuse signal, but does not punish normal retries.
-  return events.length >= 6 || domains.size >= 4;
+  return events.length >= config.abuse.signupBurstMax;
 }
 
 function validateSignup({ email, username, password }) {

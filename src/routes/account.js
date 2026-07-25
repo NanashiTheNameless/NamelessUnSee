@@ -258,10 +258,10 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
   // signal, not a substitute for server-side input validation.
   const validationError = abuse.validateSignup({ email, username, password });
   if (validationError) return res.status(400).render('signup', { error: validationError, values });
-  if (abuse.registrationRisk(req, email)) {
+  if (abuse.registrationRisk(req)) {
     return res.status(429).render('signup', { error: 'Registration is temporarily throttled. Please try again later.', values });
   }
-  abuse.recordSignup(req, email);
+  abuse.recordSignup(req);
   if (!verifySolution(req.body.altcha))
     return res.status(400).render('signup', { error: 'Bot check failed. Please try again.', values });
   if (bans.emailBan(email).account || bans.isAccountBannedIp(geo.clientIp(req)))

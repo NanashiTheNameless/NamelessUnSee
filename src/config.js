@@ -203,21 +203,39 @@ const config = {
     },
     newAccountTrustDelayMs: int(process.env.NEW_ACCOUNT_TRUST_DELAY_HOURS, 24) * 3600000,
     signupEmailWindowMs: int(process.env.RL_SIGNUP_EMAIL_WINDOW_MIN, 1440) * 60000,
-    signupEmailMax: int(process.env.RL_SIGNUP_EMAIL_MAX, 2),
+    signupEmailMax: int(process.env.RL_SIGNUP_EMAIL_MAX, 3),
+    // Signups from one network within 15 minutes before registration is
+    // throttled. Counts volume only- never the mail domain, so a shared address
+    // is not penalised for the mix of providers behind it.
+    signupBurstMax: int(process.env.RL_SIGNUP_BURST_MAX, 15),
   },
   // Rate limits (per client IP, or per user for uploads). The default store is
   // in-memory (single instance). Set RATELIMIT_STORE=redis + REDIS_URL to share
   // counters across instances; requires `yarn add redis`.
   rateLimit: {
     enabled: bool(process.env.RATELIMIT_ENABLED, true),
+    // Admins and owners bypass every limiter (they are trusted operators whose
+    // moderation work looks like burst traffic). Unauthenticated endpoints such
+    // as login are unaffected: there is no user to exempt yet.
+    exemptStaff: bool(process.env.RATELIMIT_EXEMPT_STAFF, true),
     store: String(process.env.RATELIMIT_STORE || 'memory').trim().toLowerCase(),
     redisUrl: process.env.REDIS_URL || '',
-    login: { windowMs: int(process.env.RL_LOGIN_WINDOW_MIN, 15) * 60000, max: int(process.env.RL_LOGIN_MAX, 10) },
-    signup: { windowMs: int(process.env.RL_SIGNUP_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_SIGNUP_MAX, 5) },
-    upload: { windowMs: int(process.env.RL_UPLOAD_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_UPLOAD_MAX, 30) },
-    view: { windowMs: int(process.env.RL_VIEW_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_VIEW_MAX, 120) },
-    telemetry: { windowMs: int(process.env.RL_TELEMETRY_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_TELEMETRY_MAX, 60) },
-    report: { windowMs: int(process.env.RL_REPORT_WINDOW_MIN, 1440) * 60000, max: int(process.env.RL_REPORT_MAX, 3) },
+    // Sized so that ordinary use never sees a 429: the limits exist to blunt
+    // scripted abuse, not to ration normal browsing. Viewers behind shared NAT
+    // (offices, campuses, mobile carriers) all share one IP bucket, so the
+    // per-IP view limits in particular carry a lot of legitimate traffic.
+    login: { windowMs: int(process.env.RL_LOGIN_WINDOW_MIN, 15) * 60000, max: int(process.env.RL_LOGIN_MAX, 30) },
+    signup: { windowMs: int(process.env.RL_SIGNUP_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_SIGNUP_MAX, 10) },
+    upload: { windowMs: int(process.env.RL_UPLOAD_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_UPLOAD_MAX, 120) },
+    view: { windowMs: int(process.env.RL_VIEW_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_VIEW_MAX, 600) },
+    telemetry: { windowMs: int(process.env.RL_TELEMETRY_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_TELEMETRY_MAX, 600) },
+    report: { windowMs: int(process.env.RL_REPORT_WINDOW_MIN, 1440) * 60000, max: int(process.env.RL_REPORT_MAX, 10) },
+    // Fixed ceilings for the routers and support endpoints (no env knobs: these
+    // are ordinary page traffic, and a single page can issue several requests).
+    altchaMax: int(process.env.RL_ALTCHA_MAX, 600),
+    adminMax: int(process.env.RL_ADMIN_MAX, 900),
+    authMax: int(process.env.RL_AUTH_MAX, 600),
+    publicMax: int(process.env.RL_PUBLIC_MAX, 1200),
   },
   resend: {
     apiKey: process.env.RESEND_API_KEY || '',

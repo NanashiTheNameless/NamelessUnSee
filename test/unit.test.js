@@ -191,3 +191,26 @@ test('altcha: create + verify roundtrip, reject tampering + replay', () => {
   assert.ok(!altcha.verifySolution(payload), 'replay rejected');
   assert.ok(!altcha.verifySolution('garbage'), 'garbage rejected');
 });
+
+test('abuse: a mail domain is never a bucket, only per-network volume', () => {
+  const abuse = require('../src/abuse');
+  const req = (ip) => ({ headers: { 'cf-connecting-ip': ip }, socket: {} });
+  abuse._activity.clear();
+
+  // A shared network registering across many different providers is normal and
+  // must not be throttled for the variety alone.
+  const shared = req('198.51.100.7');
+  for (const email of ['a@gmail.com', 'b@outlook.com', 'c@icloud.com', 'd@yahoo.com', 'e@proton.me']) {
+    assert.equal(abuse.registrationRisk(shared), false, `still allowed before ${email}`);
+    abuse.recordSignup(shared);
+  }
+  assert.equal(abuse.registrationRisk(shared), false, 'five providers from one network is not risky');
+
+  // Volume from that one network eventually trips it, regardless of domain.
+  for (let i = 0; i < config.abuse.signupBurstMax; i++) abuse.recordSignup(shared);
+  assert.equal(abuse.registrationRisk(shared), true, 'sustained volume is throttled');
+
+  // A different network is entirely unaffected- no global or domain-wide state.
+  assert.equal(abuse.registrationRisk(req('198.51.100.8')), false, 'other networks unaffected');
+  abuse._activity.clear();
+});

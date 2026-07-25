@@ -84,19 +84,36 @@ async function hit(key, windowMs) {
   return memoryHit(key, windowMs);
 }
 
+// Admins and owners bypass every limiter: they moderate, page through the admin
+// UI and pull originals in bursts that look exactly like the traffic these
+// limits exist to stop.
+function isStaff(user) {
+  return !!user && (user.role === 'admin' || user.rank === 'owner');
+}
+
 /**
- * @param {object} opts { name, windowMs, max, by: 'ip'|'user'|'both', key, html }
+ * @param {object} opts { name, windowMs, max, by: 'ip'|'user'|'both'|'custom', key, html }
  */
 function createLimiter(opts) {
   const { name, windowMs, max, by = 'ip', key: customKey, html = false } = opts;
 
   return function rateLimit(req, res, next) {
     if (!config.rateLimit.enabled) return next();
+    // Staff are exempt. attachUser runs before every router, so req.user is set
+    // here for any authenticated request; on the login and signup routes it is
+    // still null, which keeps brute-force protection on the unauthenticated
+    // endpoints where it actually matters.
+    if (config.rateLimit.exemptStaff && isStaff(req.user)) return next();
 
     const ipWho = 'ip:' + (geo.clientIp(req) || 'unknown');
     const userWho = req.user ? 'u:' + req.user.id : ipWho;
-    const who = by === 'both' ? [ipWho, userWho] : by === 'user' ? userWho : ipWho;
-    const keys = Array.isArray(who) ? who : [who];
+    // 'custom' counts the custom key alone. Without it, a custom key shares its
+    // budget with the IP bucket, so a strict per-subject cap would also cap
+    // everyone behind one address- an office or campus NAT hits it as a group.
+    const keys = [];
+    if (by !== 'custom' || !customKey) {
+      keys.push(...(by === 'both' ? [ipWho, userWho] : by === 'user' ? [userWho] : [ipWho]));
+    }
     if (customKey) keys.push('custom:' + String(customKey(req) || 'unknown'));
 
     Promise.all(keys.map((key) => hit(key + '|' + name, windowMs)))
@@ -126,16 +143,17 @@ const rl = config.rateLimit;
 const limiters = {
   login: createLimiter({ name: 'login', windowMs: rl.login.windowMs, max: rl.login.max, by: 'ip', html: true }),
   signup: createLimiter({ name: 'signup', windowMs: rl.signup.windowMs, max: rl.signup.max, by: 'ip', html: true }),
-  signupEmail: createLimiter({ name: 'signup-email', windowMs: config.abuse.signupEmailWindowMs, max: config.abuse.signupEmailMax, by: 'ip', key: (req) => normalizeEmail(req.body && req.body.email), html: true }),
+  // Per-address only: the per-IP signup pressure is already handled by `signup`.
+  signupEmail: createLimiter({ name: 'signup-email', windowMs: config.abuse.signupEmailWindowMs, max: config.abuse.signupEmailMax, by: 'custom', key: (req) => normalizeEmail(req.body && req.body.email), html: true }),
   upload: createLimiter({ name: 'upload', windowMs: rl.upload.windowMs, max: rl.upload.max, by: 'both', html: true }),
   view: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: true }),
   render: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: false }),
   telemetry: createLimiter({ name: 'telemetry', windowMs: rl.telemetry.windowMs, max: rl.telemetry.max, by: 'ip', html: false }),
   report: createLimiter({ name: 'report', windowMs: rl.report.windowMs, max: rl.report.max, by: 'both', html: true }),
-  altcha: createLimiter({ name: 'altcha', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
-  admin: createLimiter({ name: 'admin', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
-  public: createLimiter({ name: 'public', windowMs: 60 * 1000, max: 300, by: 'ip', html: false }),
-  auth: createLimiter({ name: 'auth', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
+  altcha: createLimiter({ name: 'altcha', windowMs: 60 * 1000, max: rl.altchaMax, by: 'ip', html: false }),
+  admin: createLimiter({ name: 'admin', windowMs: 60 * 1000, max: rl.adminMax, by: 'ip', html: false }),
+  public: createLimiter({ name: 'public', windowMs: 60 * 1000, max: rl.publicMax, by: 'ip', html: false }),
+  auth: createLimiter({ name: 'auth', windowMs: 60 * 1000, max: rl.authMax, by: 'ip', html: false }),
 };
 
 module.exports = { createLimiter, limiters, _buckets: buckets };

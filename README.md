@@ -215,7 +215,8 @@ container storage and upload it directly to R2.
 | `EMAIL_DOMAIN_ALLOWLIST_ENABLED` | `false` | Allowlist mode. When `true`, **only** domains in `EMAIL_DOMAIN_ALLOWLIST` may register and every other domain is refused regardless of the blocklists — including corporate, university and self-hosted domains |
 | `EMAIL_DOMAIN_ALLOWLIST` | mainstream providers | Comma-separated allowlist, matching a domain and its subdomains. Ships with Gmail, Outlook, iCloud, Yahoo, Proton, Tuta, Fastmail, GMX, Zoho, Yandex, QQ, Naver and the large ISP mailboxes; setting this replaces the built-in list. Has no effect until the switch above is `true` |
 | `NEW_ACCOUNT_TRUST_DELAY_HOURS` | `24` | Minimum account age before a manually trusted account receives trusted privileges |
-| `RL_SIGNUP_EMAIL_WINDOW_MIN` / `RL_SIGNUP_EMAIL_MAX` | `1440` / `2` | Registration quota per email address, in addition to the per-IP signup limit |
+| `RL_SIGNUP_BURST_MAX` | `15` | Signups from one network within 15 minutes before registration is throttled. Counts volume only — the mail domain is never a bucket, so a shared address is not penalised for the mix of providers behind it |
+| `RL_SIGNUP_EMAIL_WINDOW_MIN` / `RL_SIGNUP_EMAIL_MAX` | `1440` / `3` | Registration quota counted per email address only; per-IP signup pressure is handled by `RL_SIGNUP_MAX`, so shared networks are not capped as a group |
 | User ranks | `User`, `Trusted User`, `Owner` | Trusted users get 2x default limits and skip NSFW scanning; owners have no upload/storage limits and always have admin access |
 | `STORAGE_BACKEND` | `local` | Encrypted media backend: `local`, or `s3`/`r2` for any S3-compatible store |
 | `STORAGE_ENCRYPTION_KEY` | derived | AES-256-GCM key; set a 64-character hex key in production |
@@ -237,7 +238,9 @@ container storage and upload it directly to R2.
 | `TWOFA_ENABLED` | `true` | Require second factor after password login |
 | `TWOFA_CONSOLE_FALLBACK` | `false` | Development-only console OTP fallback; keep disabled in production |
 | `TWOFA_CHALLENGE_MIN` | `5` | Email/TOTP challenge lifetime in minutes |
-| `RL_REPORT_WINDOW_MIN` / `RL_REPORT_MAX` | `1440` / `3` | Leak-report rate limit per account |
+| `RL_REPORT_WINDOW_MIN` / `RL_REPORT_MAX` | `1440` / `10` | Leak-report rate limit per account |
+| `RATELIMIT_EXEMPT_STAFF` | `true` | Admins and owners bypass every limiter. Login and signup are unaffected — those requests are unauthenticated, so there is no staff account to exempt |
+| `RL_PUBLIC_MAX` / `RL_ADMIN_MAX` / `RL_AUTH_MAX` / `RL_ALTCHA_MAX` | `1200` / `900` / `600` / `600` | Per-IP, per-minute ceilings for the public, admin, account and challenge routers |
 | `RATELIMIT_STORE` / `REDIS_URL` | `memory` | Set `redis` + a URL to share rate-limit counters across instances (`yarn add redis`) |
 | `MODERATION_ENABLED` | `true` | Upload-time scanning (perceptual-hash blocklist + optional classifier) |
 | `MODERATION_HOLD_ON_REVIEW` | `true` | Hold review-flagged uploads (unviewable) until an admin decides |
