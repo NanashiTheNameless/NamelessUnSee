@@ -209,6 +209,13 @@ container storage and upload it directly to R2.
 | `MAX_REPORT_MB` | `10` | Max size per leak-report screenshot |
 | `MAX_UPLOAD_HARD_MB` | `4096` | Absolute ceiling for admin per-user upload overrides |
 | `MAX_STORAGE_MB` | `1024` | Default active storage quota per user |
+| `DISPOSABLE_EMAIL_DOMAINS` | built-in list | Comma-separated disposable/alias email domains to reject at registration. Matches the domain and any subdomain of it, and is merged with the downloaded blocklist below |
+| `DISPOSABLE_LIST_ENABLED` / `DISPOSABLE_REFRESH_HOURS` | `true` / `24` | Download the [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) community blocklist (~8k domains) and refresh it on this interval. Cached under `DATA_DIR/intel`; matching is entirely local |
+| `DISPOSABLE_LIST_URL` | upstream raw URL | Override the blocklist source (one bare domain per line; `#` comments allowed) |
+| `EMAIL_DOMAIN_ALLOWLIST_ENABLED` | `false` | Allowlist mode. When `true`, **only** domains in `EMAIL_DOMAIN_ALLOWLIST` may register and every other domain is refused regardless of the blocklists — including corporate, university and self-hosted domains |
+| `EMAIL_DOMAIN_ALLOWLIST` | mainstream providers | Comma-separated allowlist, matching a domain and its subdomains. Ships with Gmail, Outlook, iCloud, Yahoo, Proton, Tuta, Fastmail, GMX, Zoho, Yandex, QQ, Naver and the large ISP mailboxes; setting this replaces the built-in list. Has no effect until the switch above is `true` |
+| `NEW_ACCOUNT_TRUST_DELAY_HOURS` | `24` | Minimum account age before a manually trusted account receives trusted privileges |
+| `RL_SIGNUP_EMAIL_WINDOW_MIN` / `RL_SIGNUP_EMAIL_MAX` | `1440` / `2` | Registration quota per email address, in addition to the per-IP signup limit |
 | User ranks | `User`, `Trusted User`, `Owner` | Trusted users get 2x default limits and skip NSFW scanning; owners have no upload/storage limits and always have admin access |
 | `STORAGE_BACKEND` | `local` | Encrypted media backend: `local`, or `s3`/`r2` for any S3-compatible store |
 | `STORAGE_ENCRYPTION_KEY` | derived | AES-256-GCM key; set a 64-character hex key in production |
@@ -226,6 +233,7 @@ container storage and upload it directly to R2.
 | `VPN_LISTS_ENABLED` / `VPN_REFRESH_HOURS` | `true` / `24` | X4BNet VPN + datacenter ranges + refresh interval |
 | `RESEND_API_KEY` | *(empty)* | Resend API key for signup notices and required email 2FA |
 | `ADMIN_NOTIFY_FROM` / `ADMIN_NOTIFY_TO` | | Sender for 2FA and admin notices; admin recipient for signup, moderation, and report notices |
+| `EMAIL_VERIFICATION_REQUIRED` | `true` in production, otherwise `false` | Require a signup email code before approval/login; set `true` outside production when desired |
 | `TWOFA_ENABLED` | `true` | Require second factor after password login |
 | `TWOFA_CONSOLE_FALLBACK` | `false` | Development-only console OTP fallback; keep disabled in production |
 | `TWOFA_CHALLENGE_MIN` | `5` | Email/TOTP challenge lifetime in minutes |

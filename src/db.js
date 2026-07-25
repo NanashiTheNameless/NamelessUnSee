@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT NOT NULL DEFAULT 'user',     -- 'user' | 'admin'
   rank          TEXT NOT NULL DEFAULT 'user',     -- 'user' | 'trusted' | 'owner'
   status        TEXT NOT NULL DEFAULT 'pending',  -- 'pending' | 'approved' | 'rejected'
+  email_verified INTEGER NOT NULL DEFAULT 1,
   created_at    INTEGER NOT NULL,
   approved_at   INTEGER,
   approved_by   TEXT REFERENCES users(id)
@@ -285,6 +286,8 @@ addColumn('images', 'max_views', 'max_views INTEGER');
 addColumn('images', 'first_viewed_at', 'first_viewed_at INTEGER');
 addColumn('images', 'view_count', 'view_count INTEGER NOT NULL DEFAULT 0');
 addColumn('users', 'last_ip', 'last_ip TEXT');
+addColumn('users', 'trust_until', 'trust_until INTEGER');
+addColumn('users', 'email_verified', 'email_verified INTEGER NOT NULL DEFAULT 1');
 addColumn('users', 'twofa_mode', "twofa_mode TEXT NOT NULL DEFAULT 'email'");
 addColumn('users', 'totp_secret', 'totp_secret TEXT');
 addColumn('users', 'totp_pending_secret', 'totp_pending_secret TEXT');

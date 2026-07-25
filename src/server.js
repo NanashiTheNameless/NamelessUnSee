@@ -89,7 +89,7 @@ app.use((req, res, next) => {
 
 // Landing page.
 app.get('/', (req, res) => {
-  res.render('home', { user: req.user });
+  res.render('home', { user: req.user, deleted: req.query.deleted === '1' });
 });
 
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
@@ -149,6 +149,9 @@ function start() {
   // Load and auto-update the local IP-intelligence datasets (MaxMind GeoLite2,
   // Tor exit list, VPN/datacenter ranges). All per-viewer detection is local.
   require('./ipintel').init().catch((e) => console.warn('[NamelessUnSee] ipintel init failed:', e.message));
+
+  // Disposable-email blocklist: cached copy first, then refreshed on schedule.
+  require('./email-domains').init();
 
   return app.listen(config.port, () => {
     console.log(`[NamelessUnSee] listening on port ${config.port}- base URL ${config.baseUrl}`);

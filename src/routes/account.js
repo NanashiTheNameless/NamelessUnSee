@@ -14,6 +14,7 @@ const audit = require('../audit');
 const bans = require('../bans');
 const geo = require('../geo');
 const { limiters } = require('../ratelimit');
+const abuse = require('../abuse');
 
 const router = express.Router();
 router.use(limiters.auth);
@@ -21,6 +22,8 @@ router.use(limiters.auth);
 const getByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
 const getByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
 const setLastIp = db.prepare('UPDATE users SET last_ip = ? WHERE id = ?');
+const setEmailVerified = db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?');
+const deleteUserById = db.prepare('DELETE FROM users WHERE id = ?');
 const countUsers = db.prepare('SELECT COUNT(*) AS n FROM users');
 const getUserById = db.prepare('SELECT * FROM users WHERE id = ?');
 const insertChallenge = db.prepare(
@@ -52,8 +55,12 @@ const updateDefaults = db.prepare(
   'UPDATE users SET default_ttl = ?, default_timer_start = ?, default_max_views = ? WHERE id = ?'
 );
 const insertUser = db.prepare(
-  `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at)
-   VALUES (@id, @email, @username, @password_hash, @role, @status, @created_at, @approved_at)`
+  `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at, trust_until, email_verified)
+   VALUES (@id, @email, @username, @password_hash, @role, @status, @created_at, @approved_at, @trust_until, @email_verified)`
+);
+const insertSignupVerification = db.prepare(
+  `INSERT INTO recovery_challenges (id, user_id, kind, target, code_hash, csrf_token, created_at, expires_at)
+   VALUES (?, ?, 'signup_email', ?, ?, ?, ?, ?)`
 );
 const RESEND_DELAYS = [60, 120, 180, 240];
 const RESEND_LOCK_MS = 5 * 60 * 1000;
@@ -85,6 +92,37 @@ function clearTwofaBlockCookie(res) {
 
 function clearRecoveryCookie(res) {
   res.clearCookie('recovery', { path: '/' });
+}
+
+function clearSignupVerificationCookie(res) {
+  res.clearCookie('signup_verify', { path: '/' });
+}
+
+function signupVerificationFromRequest(req) {
+  const id = req.signedCookies && req.signedCookies.signup_verify;
+  return id ? getRecovery.get(id, Date.now()) : null;
+}
+
+async function beginSignupVerification(res, user) {
+  const id = randomToken(24);
+  const csrf = randomToken(24);
+  const code = newEmailCode();
+  const now = Date.now();
+  insertSignupVerification.run(id, user.id, user.email, otpHash(code), csrf, now, now + config.twofa.challengeTtlMs);
+  res.cookie('signup_verify', id, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.secureCookies,
+    signed: true,
+    maxAge: config.twofa.challengeTtlMs,
+    path: '/',
+  });
+  if (!(await notify.sendSignupVerification(user, code))) {
+    deleteRecovery.run(id);
+    clearSignupVerificationCookie(res);
+    return null;
+  }
+  return { csrf, email: user.email };
 }
 
 function recoveryFromRequest(req) {
@@ -210,12 +248,20 @@ router.get('/signup', gatePage, widgetPage, (req, res) => {
   res.render('signup', { error: null, values: {} });
 });
 
-router.post('/signup', limiters.signup, gatePage, widgetPage, (req, res, next) => {
-  const email = (req.body.email || '').trim().toLowerCase();
+router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPage, async (req, res, next) => {
+  const email = abuse.normalizeEmail(req.body.email);
   const username = (req.body.username || '').trim();
   const password = req.body.password || '';
   const values = { email, username };
 
+  // Validate submitted fields before the CAPTCHA result. CAPTCHA is an abuse
+  // signal, not a substitute for server-side input validation.
+  const validationError = abuse.validateSignup({ email, username, password });
+  if (validationError) return res.status(400).render('signup', { error: validationError, values });
+  if (abuse.registrationRisk(req, email)) {
+    return res.status(429).render('signup', { error: 'Registration is temporarily throttled. Please try again later.', values });
+  }
+  abuse.recordSignup(req, email);
   if (!verifySolution(req.body.altcha))
     return res.status(400).render('signup', { error: 'Bot check failed. Please try again.', values });
   if (bans.emailBan(email).account || bans.isAccountBannedIp(geo.clientIp(req)))
@@ -243,7 +289,19 @@ router.post('/signup', limiters.signup, gatePage, widgetPage, (req, res, next) =
     status: isFirst ? 'approved' : 'pending',
     created_at: now,
     approved_at: isFirst ? now : null,
+    trust_until: now + config.abuse.newAccountTrustDelayMs,
+    email_verified: config.emailVerificationRequired ? 0 : 1,
   });
+
+  const user = { id: userId, username, email, status: isFirst ? 'approved' : 'pending' };
+  if (config.emailVerificationRequired) {
+    const verification = await beginSignupVerification(res, user);
+    if (!verification) {
+      deleteUserById.run(userId);
+      return res.status(503).render('signup', { error: 'Email verification is temporarily unavailable. Please try again later.', values });
+    }
+    return res.render('signup-verify', { ...verification, error: null });
+  }
 
   if (isFirst) {
     setLastIp.run(geo.clientIp(req) || null, userId);
@@ -252,10 +310,42 @@ router.post('/signup', limiters.signup, gatePage, widgetPage, (req, res, next) =
   }
 
   // Notify admins (async, best-effort).
-  const user = { id: userId, username, email };
   notify.notifyPendingSignup(user).catch(() => {});
   notify.sendSignupStatus(user, 'pending').catch(() => {});
   res.render('signup-pending', {});
+});
+
+router.post('/signup/verify', limiters.login, widgetPage, (req, res) => {
+  const challenge = signupVerificationFromRequest(req);
+  const code = String(req.body.code || '').trim();
+  const validChallenge = challenge && challenge.kind === 'signup_email' && challenge.attempts < 5 &&
+    req.body._csrf === challenge.csrf_token;
+  if (!validChallenge) {
+    clearSignupVerificationCookie(res);
+    return res.status(403).render('signup', { error: 'Email verification expired. Please sign up again.', values: {} });
+  }
+  if (otpHash(code) !== challenge.code_hash) {
+    incrementRecoveryAttempts.run(challenge.id);
+    return res.status(400).render('signup-verify', { email: challenge.target || '', csrf: challenge.csrf_token, error: 'Invalid verification code.' });
+  }
+
+  const user = getUserById.get(challenge.user_id);
+  if (!user) {
+    deleteRecovery.run(challenge.id);
+    clearSignupVerificationCookie(res);
+    return res.status(403).render('signup', { error: 'This signup is no longer available.', values: {} });
+  }
+  setEmailVerified.run(user.id);
+  deleteRecovery.run(challenge.id);
+  clearSignupVerificationCookie(res);
+  if (user.status === 'approved') {
+    setLastIp.run(geo.clientIp(req) || null, user.id);
+    createSession(res, user.id);
+    return res.redirect('/dashboard');
+  }
+  notify.notifyPendingSignup(user).catch(() => {});
+  notify.sendSignupStatus(user, 'pending').catch(() => {});
+  return res.render('signup-pending', {});
 });
 
 // --- Account recovery -----------------------------------------------------
@@ -333,6 +423,9 @@ router.post('/login', limiters.login, widgetPage, async (req, res) => {
 
   if (!user) return fail();
   if (!verifyPassword(password, user.password_hash)) return fail();
+  if (!user.email_verified) {
+    return res.status(403).render('login', { error: 'Please verify your email address before logging in.', next: nextUrl, values });
+  }
   if (user.status === 'pending')
     return res.status(403).render('login', { error: 'Your account is awaiting admin approval.', next: nextUrl, values });
   if (user.status === 'rejected')
@@ -656,6 +749,10 @@ router.post('/account/security/delete/start', requireAuth, widgetPage, verifyCsr
   if (!config.twofa.enabled) {
     return renderAccount(res, req.user, { tab: 'security', error: 'Account deletion requires 2FA to be enabled on this instance.' });
   }
+  // The owner account keeps the instance administrable; removing it is CLI-only.
+  if (req.user.rank === 'owner') {
+    return renderAccount(res, req.user, { tab: 'security', error: 'The owner account cannot be deleted from the web interface.' });
+  }
 
   const method = req.user.totp_enabled ? 'totp' : 'email';
   const challenge = await beginAccountDeletionTwofa(res, req.user, method);
@@ -704,7 +801,13 @@ router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiter
     });
   }
 
+  if (user.rank === 'owner') {
+    return renderAccount(res, req.user, { tab: 'security', error: 'The owner account cannot be deleted from the web interface.' });
+  }
+
   try {
+    // Recorded before the delete: the transaction nulls actor_id but keeps the
+    // actor name, and a row inserted afterwards would violate the foreign key.
     audit.record(req.user, 'delete_own_account', `${req.user.username} <${req.user.email}> (#${req.user.id})`);
     await deleteUserAccount(req.user);
   } catch (err) {
@@ -714,10 +817,9 @@ router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiter
     return renderAccount(res, req.user, { tab: 'security', error: 'Account deletion failed. Please try again, and contact the administrator if this continues.' });
   }
 
-  // Success: delete the account.
-  deleteChallenge.run(challenge.id);
+  // The challenge, sessions and TOTP state cascaded away with the user row, so
+  // only the browser-side cookies are left to clear.
   clearTwofaCookie(res);
-  if (challenge.method === 'totp') updateTotpCounter.run(totpCounter, user.id);
   destroySession(req, res);
   return res.redirect('/?deleted=1');
 });

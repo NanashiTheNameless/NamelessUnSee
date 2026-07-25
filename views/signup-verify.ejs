@@ -1,0 +1,17 @@
+<% var pageTitle = 'NamelessUnSee - verify email'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <h1>Verify your email</h1>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
+  <div class="card" style="max-width:420px">
+    <p>We sent a six-digit verification code to <span class="mono"><%= email %></span>. It expires in 5 minutes.</p>
+    <form method="post" action="/signup/verify">
+      <input type="hidden" name="_csrf" value="<%= csrf %>">
+      <label for="code">Verification code</label>
+      <input type="text" id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
+      <p><button class="btn" type="submit">Verify email</button></p>
+    </form>
+  </div>
+</div>
+<%- include('partials/foot') %>

@@ -17,6 +17,7 @@ process.env.NSFW_CLASSIFIER_ENABLED = 'true';
 process.env.MODERATION_HOLD_ON_REVIEW = 'true';
 process.env.TWOFA_ENABLED = 'false';
 process.env.RESEND_API_KEY = ''; // never send real email from tests (a real key may sit in local .env)
+process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED = 'false'; // tests register example.com addresses
 process.env.ADMIN_NOTIFY_FROM = '';
 process.env.ADMIN_NOTIFY_TO = '';
 

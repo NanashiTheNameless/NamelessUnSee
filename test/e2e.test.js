@@ -20,6 +20,7 @@ process.env.NSFW_CLASSIFIER_ENABLED = 'false'; // no external model in CI
 process.env.TWOFA_ENABLED = 'false'; // dedicated 2FA coverage lives in test/twofa.test.js
 process.env.OPERATOR_CONTACT = 'operator@test.example'; // exercises the obfuscated-contact path
 process.env.RESEND_API_KEY = ''; // never send real email from tests (a real key may sit in local .env)
+process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED = 'false'; // tests register example.com addresses
 process.env.ADMIN_NOTIFY_FROM = '';
 process.env.ADMIN_NOTIFY_TO = '';
 
@@ -131,9 +132,11 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
   assert.equal(r.status, 302, 'first signup redirects');
   assert.ok(jar.has('sid'), 'first user logged in');
   // ...and is NOT an admin
-  const firstRole = db.prepare('SELECT role, status FROM users WHERE username = ?').get('firstuser');
+  const firstRole = db.prepare('SELECT role, rank, status FROM users WHERE username = ?').get('firstuser');
   assert.equal(firstRole.role, 'user');
   assert.equal(firstRole.status, 'approved');
+  // Trust is only ever granted by an admin- signup must never confer it.
+  assert.equal(firstRole.rank, 'user');
 
   // Account settings control defaults shown for future uploads.
   const accountHtml = await (await req('/account')).text();

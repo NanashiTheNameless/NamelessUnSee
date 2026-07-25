@@ -197,6 +197,37 @@ async function sendSignupStatus(user, status) {
   }
 }
 
+async function sendSignupVerification(user, code) {
+  const { apiKey } = config.resend;
+  const from = cleanFrom(config.resend.from);
+  const subject = 'NamelessUnSee email verification code';
+  const text = [
+    `Hi ${user.username},`, '',
+    `Your NamelessUnSee email verification code is ${code}.`,
+    'It expires in 5 minutes.',
+  ].join('\n');
+  const html = `<p>Hi ${escapeHtml(user.username)},</p><p>Your NamelessUnSee email verification code is <strong>${escapeHtml(code)}</strong>.</p><p>It expires in 5 minutes.</p>`;
+  if (!apiKey || !from) {
+    if (config.twofa.consoleFallback) {
+      console.log(`[NamelessUnSee] Signup verification for ${user.email}: ${code}`);
+      return true;
+    }
+    console.warn('[NamelessUnSee] Signup email verification unavailable: configure RESEND_API_KEY and ADMIN_NOTIFY_FROM.');
+    return false;
+  }
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to: [user.email], subject, text, html }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[NamelessUnSee] Signup verification email error:', err.message);
+    return false;
+  }
+}
+
 async function sendLoginCode(user, code, link) {
   const { apiKey } = config.resend;
   const from = cleanFrom(config.resend.from);
@@ -348,6 +379,7 @@ module.exports = {
   notifyAdminFlag,
   notifyAdminReport,
   sendSignupStatus,
+  sendSignupVerification,
   sendLoginCode,
   sendAccountDeletionCode,
   sendRecoveryCode,

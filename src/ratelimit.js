@@ -2,6 +2,7 @@
 
 const config = require('./config');
 const geo = require('./geo');
+const { normalizeEmail } = require('./abuse');
 
 // Fixed-window rate limiter, keyed by client IP (or user id). Two stores:
 //   - memory (default): per-process Map, fine for a single instance.
@@ -84,20 +85,24 @@ async function hit(key, windowMs) {
 }
 
 /**
- * @param {object} opts { name, windowMs, max, by: 'ip'|'user', html: bool }
+ * @param {object} opts { name, windowMs, max, by: 'ip'|'user'|'both', key, html }
  */
 function createLimiter(opts) {
-  const { name, windowMs, max, by = 'ip', html = false } = opts;
+  const { name, windowMs, max, by = 'ip', key: customKey, html = false } = opts;
 
   return function rateLimit(req, res, next) {
     if (!config.rateLimit.enabled) return next();
 
-    const who =
-      by === 'user' && req.user ? 'u:' + req.user.id : 'ip:' + (geo.clientIp(req) || 'unknown');
-    const key = who + '|' + name;
+    const ipWho = 'ip:' + (geo.clientIp(req) || 'unknown');
+    const userWho = req.user ? 'u:' + req.user.id : ipWho;
+    const who = by === 'both' ? [ipWho, userWho] : by === 'user' ? userWho : ipWho;
+    const keys = Array.isArray(who) ? who : [who];
+    if (customKey) keys.push('custom:' + String(customKey(req) || 'unknown'));
 
-    hit(key, windowMs)
-      .then(({ count, resetMs }) => {
+    Promise.all(keys.map((key) => hit(key + '|' + name, windowMs)))
+      .then((hits) => {
+        const count = Math.max(...hits.map((h) => h.count));
+        const resetMs = Math.max(...hits.map((h) => h.resetMs));
         const retryAfter = Math.max(1, Math.ceil(resetMs / 1000));
         res.setHeader('RateLimit-Limit', String(max));
         res.setHeader('RateLimit-Remaining', String(Math.max(0, max - count)));
@@ -121,11 +126,13 @@ const rl = config.rateLimit;
 const limiters = {
   login: createLimiter({ name: 'login', windowMs: rl.login.windowMs, max: rl.login.max, by: 'ip', html: true }),
   signup: createLimiter({ name: 'signup', windowMs: rl.signup.windowMs, max: rl.signup.max, by: 'ip', html: true }),
-  upload: createLimiter({ name: 'upload', windowMs: rl.upload.windowMs, max: rl.upload.max, by: 'user', html: true }),
+  signupEmail: createLimiter({ name: 'signup-email', windowMs: config.abuse.signupEmailWindowMs, max: config.abuse.signupEmailMax, by: 'ip', key: (req) => normalizeEmail(req.body && req.body.email), html: true }),
+  upload: createLimiter({ name: 'upload', windowMs: rl.upload.windowMs, max: rl.upload.max, by: 'both', html: true }),
   view: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: true }),
   render: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: false }),
   telemetry: createLimiter({ name: 'telemetry', windowMs: rl.telemetry.windowMs, max: rl.telemetry.max, by: 'ip', html: false }),
-  report: createLimiter({ name: 'report', windowMs: rl.report.windowMs, max: rl.report.max, by: 'user', html: true }),
+  report: createLimiter({ name: 'report', windowMs: rl.report.windowMs, max: rl.report.max, by: 'both', html: true }),
+  altcha: createLimiter({ name: 'altcha', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
   admin: createLimiter({ name: 'admin', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),
   public: createLimiter({ name: 'public', windowMs: 60 * 1000, max: 300, by: 'ip', html: false }),
   auth: createLimiter({ name: 'auth', windowMs: 60 * 1000, max: 120, by: 'ip', html: false }),

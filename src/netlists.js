@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const { parseIp, normalizeIp, RangeSet } = require('./util/ip');
+const { fetchText, readCache } = require('./util/fetch-cache');
 
 const DIR = config.ipIntel.cacheDir;
 
@@ -24,47 +25,6 @@ const state = {
 
 function cachePath(name) {
   return path.join(DIR, name);
-}
-
-// Conditional GET with ETag / Last-Modified caching. Returns:
-//   { status: 'ok', text } | { status: 'notmodified' } | { status: 'error' }
-async function fetchText(url, cacheFile) {
-  const metaFile = cacheFile + '.meta';
-  let meta = {};
-  try {
-    meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
-  } catch { /* no meta yet */ }
-
-  const headers = { 'User-Agent': 'NamelessUnSee/1.0 (+forensic-watermark)' };
-  if (meta.etag) headers['If-None-Match'] = meta.etag;
-  if (meta.lastModified) headers['If-Modified-Since'] = meta.lastModified;
-
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), 15000);
-  try {
-    const res = await fetch(url, { headers, signal: controller.signal });
-    if (res.status === 304) return { status: 'notmodified' };
-    if (!res.ok) return { status: 'error', code: res.status };
-    const text = await res.text();
-    fs.writeFileSync(cacheFile, text);
-    fs.writeFileSync(
-      metaFile,
-      JSON.stringify({ etag: res.headers.get('etag') || null, lastModified: res.headers.get('last-modified') || null })
-    );
-    return { status: 'ok', text };
-  } catch (e) {
-    return { status: 'error', message: e.message };
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-function readCache(cacheFile) {
-  try {
-    return fs.readFileSync(cacheFile, 'utf8');
-  } catch {
-    return null;
-  }
 }
 
 function buildTor(text) {

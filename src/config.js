@@ -136,6 +136,75 @@ const config = {
       hideLogo: bool(process.env.ALTCHA_HIDE_LOGO, true),
     },
   },
+  abuse: {
+    // Comma-separated domain suffixes, matched against the address domain and
+    // any parent of it. Operators can replace/extend this list without shipping
+    // a new build. This is the offline seed: it covers well-known throwaway
+    // services plus the alias/relay providers that the community blocklist
+    // deliberately leaves out, and it still applies when the downloaded list
+    // below is disabled or unavailable.
+    disposableEmailDomains: new Set(String(process.env.DISPOSABLE_EMAIL_DOMAINS || [
+      // Classic throwaway inboxes.
+      '10minutemail.com', '10minutemail.net', 'guerrillamail.com', 'guerrillamail.info',
+      'sharklasers.com', 'mailinator.com', 'tempmail.com', 'temp-mail.org', 'yopmail.com',
+      'throwaway.email', 'dispostable.com', 'fakeinbox.com', 'getnada.com', 'maildrop.cc',
+      'mailnesia.com', 'mohmal.com', 'trashmail.com', 'tempmailo.com', 'moakt.com',
+      'emailondeck.com', 'mailsac.com', 'spamgourmet.com', 'inboxkitten.com', 'linshiyouxiang.net',
+      // Alias / relay providers: real inboxes, but disposable by design.
+      'mozmail.com', 'relay.firefox.com',            // Firefox Relay
+      'passmail.net', 'passmail.com', 'passinbox.com', 'passfwd.com', // Proton Pass
+      'simplelogin.com', 'simplelogin.co', 'simplelogin.fr', 'slmail.me', 'aleeas.com',
+      'anonaddy.com', 'anonaddy.me', 'addy.io', 'addymail.com',
+      'duck.com',                                    // DuckDuckGo Email Protection
+      'privaterelay.appleid.com',                    // Apple Hide My Email
+      '33mail.com', 'burnermail.io', 'forwardemail.net', 'spamex.com',
+    ].join(',')).split(',').map((d) => d.trim().toLowerCase()).filter(Boolean)),
+    // Allowlist mode. When enabled, ONLY these domains (and their subdomains)
+    // may register and every other domain is refused, regardless of the
+    // blocklists. The mode is a separate switch from the list so that shipping
+    // defaults here cannot silently lock an existing instance down: the list is
+    // pre-filled with the mainstream providers, and the operator decides when it
+    // becomes the policy.
+    emailAllowlistEnabled: bool(process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED, false),
+    allowedEmailDomains: new Set(String(process.env.EMAIL_DOMAIN_ALLOWLIST || [
+      'namelessnanashi.dev',
+      // Google / Microsoft / Apple / Yahoo.
+      'gmail.com', 'googlemail.com',
+      'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'passport.com',
+      'icloud.com', 'me.com', 'mac.com',
+      'yahoo.com', 'ymail.com', 'rocketmail.com', 'yahoo.co.uk', 'yahoo.co.jp',
+      'yahoo.ca', 'yahoo.com.au', 'yahoo.com.br', 'yahoo.de', 'yahoo.fr', 'yahoo.es', 'yahoo.in',
+      // Privacy-focused mailboxes.
+      'proton.me', 'protonmail.com', 'protonmail.ch', 'pm.me',
+      'tuta.com', 'tutanota.com', 'tutamail.com', 'keemail.me',
+      'fastmail.com', 'fastmail.fm', 'mailbox.org', 'posteo.de', 'runbox.com',
+      'startmail.com', 'hushmail.com', 'disroot.org', 'riseup.net',
+      // Other large consumer providers.
+      'aol.com', 'mail.com', 'gmx.com', 'gmx.net', 'gmx.de', 'gmx.at', 'gmx.ch',
+      'web.de', 'zoho.com', 'zohomail.com', 'yandex.com', 'yandex.ru',
+      'mail.ru', 'bk.ru', 'inbox.ru', 'list.ru', 'rambler.ru',
+      'qq.com', '163.com', '126.com', 'sina.com', 'sina.cn', 'foxmail.com',
+      'naver.com', 'daum.net', 'hanmail.net', 'seznam.cz', 'wp.pl', 'o2.pl',
+      'orange.fr', 'wanadoo.fr', 'free.fr', 'laposte.net', 'libero.it', 'virgilio.it',
+      't-online.de', 'bluewin.ch', 'telenet.be', 'ziggo.nl', 'xs4all.nl',
+      'btinternet.com', 'sky.com', 'virginmedia.com', 'bigpond.com', 'optusnet.com.au',
+      // Large US ISP mailboxes.
+      'comcast.net', 'verizon.net', 'att.net', 'sbcglobal.net', 'cox.net',
+      'charter.net', 'bellsouth.net', 'earthlink.net', 'shaw.ca', 'rogers.com',
+    ].join(',')).split(',').map((d) => d.trim().toLowerCase().replace(/^@/, '')).filter(Boolean)),
+    // Community blocklist, downloaded and refreshed like the IP datasets. It is
+    // merged with the seed list above; matching stays entirely local.
+    disposableList: {
+      enabled: bool(process.env.DISPOSABLE_LIST_ENABLED, true),
+      url: process.env.DISPOSABLE_LIST_URL ||
+        'https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf',
+      refreshHours: int(process.env.DISPOSABLE_REFRESH_HOURS, 24),
+      cacheDir: path.join(DATA_DIR, 'intel'),
+    },
+    newAccountTrustDelayMs: int(process.env.NEW_ACCOUNT_TRUST_DELAY_HOURS, 24) * 3600000,
+    signupEmailWindowMs: int(process.env.RL_SIGNUP_EMAIL_WINDOW_MIN, 1440) * 60000,
+    signupEmailMax: int(process.env.RL_SIGNUP_EMAIL_MAX, 2),
+  },
   // Rate limits (per client IP, or per user for uploads). The default store is
   // in-memory (single instance). Set RATELIMIT_STORE=redis + REDIS_URL to share
   // counters across instances; requires `yarn add redis`.
@@ -160,6 +229,7 @@ const config = {
     consoleFallback: bool(process.env.TWOFA_CONSOLE_FALLBACK, false),
     challengeTtlMs: int(process.env.TWOFA_CHALLENGE_MIN, 5) * 60000,
   },
+  emailVerificationRequired: bool(process.env.EMAIL_VERIFICATION_REQUIRED, process.env.NODE_ENV === 'production'),
   // Content moderation. Scanning runs on upload using the original image or
   // sampled frames for videos.
   //   - perceptual-hash blocklist (self-managed): auto-quarantine on match.

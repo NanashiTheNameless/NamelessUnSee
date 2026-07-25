@@ -3,6 +3,9 @@
 <%- include('partials/nav') %>
 <div class="wrap">
   <h1>NamelessUnSee</h1>
+  <% if (typeof deleted !== 'undefined' && deleted) { %>
+    <div class="notice">Your account and all of its files have been permanently deleted.</div>
+  <% } %>
   <p class="muted">A transparent-source successor to the now defunct unsee.cc.<br>Share an image or video for a limited time; everyone who views it sees a copy stamped with their own IP, location and device, so if it leaks, you know who leaked it.</p>
 
   <div class="card">

@@ -15,6 +15,7 @@ process.env.TWOFA_ENABLED = 'true';
 process.env.STORAGE_BACKEND = 'local';
 process.env.TWOFA_CHALLENGE_MIN = '5';
 process.env.RESEND_API_KEY = 'test-resend-key';
+process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED = 'false'; // tests register example.test addresses
 process.env.ADMIN_NOTIFY_FROM = 'security@example.test';
 
 const { test } = require('node:test');
@@ -212,4 +213,65 @@ test('account deletion uses TOTP when enabled', async () => {
   assert.equal(r.status, 302);
   assert.equal(r.headers.get('location'), '/?deleted=1');
   assert.equal(db.prepare('SELECT * FROM users WHERE username = ?').get('totpdel'), undefined);
+});
+
+test('account deletion rejects a bad password, a bad code, and the owner account', async () => {
+  const seedNow = Date.now();
+  const seed = db.prepare(
+    `INSERT INTO users (id, email, username, password_hash, role, rank, status, created_at, approved_at, email_verified)
+     VALUES (?, ?, ?, ?, 'user', ?, 'approved', ?, ?, 1)`
+  );
+  seed.run(uuidv7(seedNow), 'guard@example.test', 'delguard', hashPassword('password1234'), 'user', seedNow, seedNow);
+  seed.run(uuidv7(seedNow), 'ownerdel@example.test', 'ownerdel', hashPassword('password1234'), 'owner', seedNow, seedNow);
+
+  const login = async (username) => {
+    const jar = newJar();
+    const req = makeReq(app, jar);
+    await consent(req, '/');
+    const altcha = await solveAltcha(req);
+    const r = await req('/login', form({ identifier: username, password: 'password1234', altcha, next: '/dashboard' }));
+    const code = (lastEmail.text.match(/code is (\d{6})/) || [])[1];
+    await req('/login/2fa', form({ _csrf: csrfFrom(await r.text()), code, next: '/dashboard' }));
+    assert.ok(jar.has('sid'), `${username} logged in`);
+    return req;
+  };
+
+  const req = await login('delguard');
+  const csrf = csrfFrom(await (await req('/account?tab=security')).text());
+
+  // Wrong password: no challenge is issued.
+  let r = await req('/account/security/delete/start', form({ _csrf: csrf, password: 'wrongpassword', altcha: await solveAltcha(req) }));
+  assert.equal(r.status, 200);
+  let html = await r.text();
+  assert.match(html, /Current password is incorrect/);
+  assert.ok(!/_twofa_csrf/.test(html), 'no deletion challenge issued');
+
+  // A missing/invalid ALTCHA solution is refused too.
+  r = await req('/account/security/delete/start', form({ _csrf: csrf, password: 'password1234', altcha: 'bogus' }));
+  assert.match(await r.text(), /Bot check failed/);
+  assert.ok(db.prepare('SELECT 1 FROM users WHERE username = ?').get('delguard'), 'account still present');
+
+  // Correct password + ALTCHA issues a challenge; a wrong code does not delete.
+  r = await req('/account/security/delete/start', form({ _csrf: csrf, password: 'password1234', altcha: await solveAltcha(req) }));
+  html = await r.text();
+  const twofaCsrf = (html.match(/name="_twofa_csrf" value="([^"]+)"/) || [])[1];
+  assert.ok(twofaCsrf, 'challenge issued');
+  const goodCode = (lastEmail.text.match(/code is (\d{6})/) || [])[1];
+
+  r = await req('/account/security/delete/confirm', form({ _csrf: csrfFrom(html), _twofa_csrf: twofaCsrf, code: '000000' }));
+  assert.equal(r.status, 200);
+  assert.match(await r.text(), /Invalid verification code/);
+  assert.ok(db.prepare('SELECT 1 FROM users WHERE username = ?').get('delguard'), 'wrong code does not delete');
+
+  // The right code still works after the failed attempt.
+  r = await req('/account/security/delete/confirm', form({ _csrf: csrf, _twofa_csrf: twofaCsrf, code: goodCode }));
+  assert.equal(r.status, 302);
+  assert.equal(db.prepare('SELECT 1 FROM users WHERE username = ?').get('delguard'), undefined);
+
+  // The owner account cannot be deleted through the web interface.
+  const ownerReq = await login('ownerdel');
+  const ownerCsrf = csrfFrom(await (await ownerReq('/account?tab=security')).text());
+  r = await ownerReq('/account/security/delete/start', form({ _csrf: ownerCsrf, password: 'password1234', altcha: await solveAltcha(ownerReq) }));
+  assert.match(await r.text(), /owner account cannot be deleted/i);
+  assert.ok(db.prepare('SELECT 1 FROM users WHERE username = ?').get('ownerdel'), 'owner survives');
 });
