@@ -17,6 +17,7 @@ process.env.TWOFA_CHALLENGE_MIN = '5';
 process.env.RESEND_API_KEY = 'test-resend-key';
 process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED = 'false'; // tests register example.test addresses
 process.env.ADMIN_NOTIFY_FROM = 'security@example.test';
+process.env.OPERATOR_CONTACT = 'operator@example.test'; // rejection emails point here
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -437,9 +438,8 @@ test('rejection points the applicant at the operator contact; owner can override
   const csrf = csrfFrom(await (await adminReq('/admin/users')).text());
   lastEmail = null;
   await adminReq(`/admin/users/${targetId}/reject`, form({ _csrf: csrf }));
-  const contact = require('../src/config').operator.contact;
-  assert.ok(contact, 'operator contact is configured for this test instance');
-  assert.match(lastEmail.text, new RegExp(contact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(require('../src/config').operator.contact, 'operator@example.test');
+  assert.match(lastEmail.text, /operator@example\.test/);
   assert.match(lastEmail.html, /mailto:/);
 
   // An admin cannot override; only the owner can.
