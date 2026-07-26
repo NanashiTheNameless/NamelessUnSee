@@ -15,7 +15,7 @@
       <input type="password" id="password" name="password" autocomplete="new-password" minlength="10" required>
       <label for="reason">Why do you want an account? <span class="muted">(required)</span></label>
       <p class="muted" style="margin:.2rem 0 .4rem">Every account is reviewed by hand. Tell the administrators who you are and what you intend to use the service for.</p>
-      <textarea id="reason" name="reason" rows="4" minlength="20" maxlength="2000" required placeholder="What you plan to share, and anywhere the administrators might know you from."><%= values.reason || '' %></textarea>
+      <textarea id="reason" name="reason" rows="7" minlength="20" maxlength="2000" required placeholder="What you plan to share, and anywhere the administrators might know you from."><%= values.reason || '' %></textarea>
 
       <div style="margin-top:1rem">
         <%- include('partials/altcha-widget') %>

@@ -76,11 +76,14 @@
   h1 { font-size: 1.5rem; margin: .2rem 0 1rem; }
   h2 { font-size: 1.15rem; margin: 1.4rem 0 .6rem; }
   label { display: block; margin: .8rem 0 .3rem; font-weight: 600; font-size: .92rem; }
-  input[type=text], input[type=email], input[type=password], input[type=file] {
+  input[type=text], input[type=email], input[type=password], input[type=file], textarea {
     width: 100%; padding: .6rem .7rem; border-radius: 7px;
     border: 1px solid var(--border); background: #111116; color: var(--text); font-size: 1rem;
   }
-  select, textarea { border-color: var(--border); background: #111116; color: var(--text); }
+  /* Textareas default to a monospace font and a fixed column width; inherit the
+     page font and let them fill their container like every other field. */
+  textarea { font-family: inherit; line-height: 1.45; resize: vertical; min-height: 6.5rem; }
+  select { border: 1px solid var(--border); border-radius: 7px; padding: .5rem .6rem; background: #111116; color: var(--text); font-family: inherit; font-size: .95rem; }
   .btn {
     display: inline-flex; align-items: center; justify-content: center; text-align: center;
     vertical-align: middle; line-height: 1.2; padding: .55rem 1rem; border-radius: 7px;
