@@ -17,8 +17,11 @@ const router = express.Router();
 
 const getLive = db.prepare('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
 // A row with a non-null ip means a render already happened for this view id
-// (the telemetry beacon also upserts the row, but never sets ip).
-const getExistingView = db.prepare('SELECT 1 AS seen FROM access_logs WHERE image_id = ? AND view_id = ? AND ip IS NOT NULL');
+// (the telemetry beacon also upserts the row, but never sets ip; blocked
+// attempts set ip but are never a served view).
+const getExistingView = db.prepare(
+  'SELECT 1 AS seen FROM access_logs WHERE image_id = ? AND view_id = ? AND ip IS NOT NULL AND blocked_reason IS NULL'
+);
 const startTimer = db.prepare(
   'UPDATE images SET first_viewed_at = ?, expires_at = ? WHERE id = ? AND first_viewed_at IS NULL'
 );
@@ -137,6 +140,10 @@ function linkGone(res) {
   });
 }
 
+function linkLabelOf(link) {
+  return link ? (link.label || `link #${link.id}`) : null;
+}
+
 function blockMessage(reason) {
   switch (reason) {
     case 'no-public-ip':
@@ -162,6 +169,8 @@ router.get(['/i/:token', '/r/:token'], limiters.view, requireConsent, withScript
 
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
+    // A refused viewer is still forensic signal for the owner: log the attempt.
+    try { logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
     res.status(403);
     return res.render('view-blocked', { reason: assessment.reason, message: blockMessage(assessment.reason) });
   }
@@ -213,7 +222,10 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
   // Assess the viewer. If we cannot fully identify them, or they are behind a
   // VPN/proxy/Tor, refuse to render the image.
   const assessment = await ipintel.assess(req);
-  if (!assessment.allowed) return res.status(403).type('text').send(blockMessage(assessment.reason));
+  if (!assessment.allowed) {
+    try { logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
+    return res.status(403).type('text').send(blockMessage(assessment.reason));
+  }
 
   const viewId = sanitizeViewId(req.query.v);
   // Replays and seeks re-request the media with the same per-page view id;
@@ -221,7 +233,7 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
   // link may still replay a view it already paid for- never start a new one.
   const isReplay = !!(viewId && getExistingView.get(img.id, viewId));
   if (exhausted && !isReplay) return res.status(410).type('text').send('This share link has been used up or revoked.');
-  const linkLabel = link ? (link.label || `link #${link.id}`) : null;
+  const linkLabel = linkLabelOf(link);
   let identity;
   try {
     identity = logging.logRender(req, img.id, viewId, assessment, linkLabel);

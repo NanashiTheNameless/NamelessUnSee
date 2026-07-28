@@ -8,6 +8,14 @@
   function humanKey(key) {
     return String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
   }
+  function blockedLabel(reason) {
+    switch (reason) {
+      case 'proxy': return 'VPN / proxy / Tor';
+      case 'no-public-ip': return 'no public IP';
+      case 'intel-unavailable': return 'connection unverifiable';
+      default: return reason;
+    }
+  }
   function prettyValue(value, depth) {
     depth = depth || 0;
     if (value === null || value === undefined || value === '') return '<span class="muted">—</span>';
@@ -59,6 +67,9 @@
     <div class="card">
       <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline">
         <strong class="mono"><%= r.ip || 'unknown' %></strong>
+        <% if (r.blocked_reason) { %>
+          <span class="pill rejected">blocked: <%= blockedLabel(r.blocked_reason) %></span>
+        <% } %>
         <% if (r.geo && r.geo.proxy && r.geo.proxy.isProxy) { %>
           <span class="pill rejected">proxy/VPN: <%= r.geo.proxy.type || 'yes' %></span>
         <% } %>
@@ -105,7 +116,9 @@
       </section>
 
       <div style="margin-top:.7rem">
-        <% if (r.reported) { %>
+        <% if (r.blocked_reason) { %>
+          <span class="muted">Access was refused - no image was delivered to this viewer.</span>
+        <% } else if (r.reported) { %>
           <button class="btn secondary small" type="button" disabled>Already Reported</button>
         <% } else { %>
           <a class="btn danger small" href="/dashboard/i/<%= image.token %>/logs/<%= r.id %>/report">Report As Leaker</a>

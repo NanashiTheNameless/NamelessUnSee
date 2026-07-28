@@ -7,9 +7,13 @@ const { requireAuth, verifyCsrf } = require('../auth');
 const { limiters } = require('../ratelimit');
 const { requireConsent, withScriptNonce } = require('../middleware');
 const ipintel = require('../ipintel');
+const logging = require('../logging');
 const { uuidv7 } = require('../util/crypto');
 
 const router = express.Router();
+
+// Upper bound on blocked-attempt rows written for a single refused gallery hit.
+const BLOCKED_LOG_CAP = 50;
 
 // --- DB queries --------------------------------------------------------------
 const listMine = db.prepare(
@@ -170,13 +174,19 @@ router.get('/g/:token', limiters.view, requireConsent, withScriptNonce, async (r
   const g = getGalleryLive.get(req.params.token);
   if (!g) return res.status(404).render('view-gone', { expired: false });
 
+  const items = listGalleryItems.all(g.id, Date.now()).filter(isViewable);
+
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
+    // A gallery link grants access to every image in it, so a refused attempt
+    // belongs in each image's own access log (bounded, and deduped per IP).
+    for (const item of items.slice(0, BLOCKED_LOG_CAP)) {
+      try { logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`); } catch { /* non-fatal */ }
+    }
     res.status(403);
     return res.render('view-blocked', { reason: assessment.reason, message: blockMessage(assessment.reason) });
   }
 
-  const items = listGalleryItems.all(g.id, Date.now()).filter(isViewable);
   if (!items.length) return res.status(404).render('view-gone', { expired: false });
 
   res.setHeader('Cache-Control', 'no-store');

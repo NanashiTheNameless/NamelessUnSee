@@ -70,6 +70,67 @@ function logRender(req, imageId, viewId, assessment, linkLabel = null) {
   };
 }
 
+// Refused viewers (VPN/proxy/Tor, unidentifiable connection) never get image
+// bytes, so they are recorded as separate attempt rows: view_id stays NULL so
+// they can never be mistaken for a served view, and blocked_reason carries the
+// refusal. Repeat attempts from the same IP for the same reason within this
+// window refresh the existing row instead of piling up on every refresh.
+const BLOCKED_DEDUPE_MS = 10 * 60 * 1000;
+
+const insertBlocked = db.prepare(`
+INSERT INTO access_logs
+  (image_id, view_id, viewed_at, ip, ip_country, geo_json, user_agent, device_json, headers_json, client_json, link_label, blocked_reason)
+VALUES
+  (@image_id, NULL, @viewed_at, @ip, @ip_country, @geo_json, @user_agent, @device_json, @headers_json, NULL, @link_label, @blocked_reason)
+`);
+
+const touchBlocked = db.prepare(`
+UPDATE access_logs SET
+  viewed_at    = @viewed_at,
+  ip_country   = @ip_country,
+  geo_json     = @geo_json,
+  user_agent   = @user_agent,
+  device_json  = @device_json,
+  headers_json = @headers_json,
+  link_label   = COALESCE(@link_label, link_label)
+WHERE id = (
+  SELECT id FROM access_logs
+  WHERE image_id = @image_id AND blocked_reason = @blocked_reason
+    AND ip IS @ip AND viewed_at >= @since
+  ORDER BY viewed_at DESC LIMIT 1
+)
+`);
+
+/**
+ * Record a refused access attempt. Same shape as logRender, but the row is
+ * flagged with the block reason and never counts as a delivered view.
+ */
+function logBlocked(req, imageId, assessment, linkLabel = null) {
+  const ua = req.headers['user-agent'] || '';
+  const device = parseUserAgent(ua);
+  const geoBlob = {
+    ...(assessment.geo || {}),
+    country: assessment.country || (assessment.geo && assessment.geo.country) || null,
+    proxy: assessment.proxy || null,
+  };
+  const row = {
+    image_id: imageId,
+    viewed_at: Date.now(),
+    ip: assessment.ip || null,
+    ip_country: assessment.country || (assessment.geo && assessment.geo.countryCode) || null,
+    geo_json: JSON.stringify(geoBlob),
+    user_agent: ua || null,
+    device_json: JSON.stringify(device),
+    headers_json: JSON.stringify(captureHeaders(req)),
+    link_label: linkLabel || null,
+    blocked_reason: assessment.reason || 'blocked',
+  };
+
+  if (touchBlocked.run({ ...row, since: row.viewed_at - BLOCKED_DEDUPE_MS }).changes === 0) {
+    insertBlocked.run(row);
+  }
+}
+
 /** Record the client-side telemetry beacon for a given view. */
 function logClient(imageId, viewId, clientData) {
   upsert.run({
@@ -87,4 +148,4 @@ function logClient(imageId, viewId, clientData) {
   });
 }
 
-module.exports = { logRender, logClient, captureHeaders };
+module.exports = { logRender, logBlocked, logClient, captureHeaders };

@@ -40,7 +40,8 @@ const insertReport = db.prepare(
 const getOwnerLog = db.prepare(
   `SELECT a.*, i.token, i.title
    FROM access_logs a JOIN images i ON i.id = a.image_id
-   WHERE a.id = ? AND i.token = ? AND i.owner_id = ? AND i.deleted_at IS NULL`
+   WHERE a.id = ? AND i.token = ? AND i.owner_id = ? AND i.deleted_at IS NULL
+     AND a.blocked_reason IS NULL`
 );
 const existingLogReport = db.prepare('SELECT id FROM leak_reports WHERE access_log_id = ?');
 const insertProof = db.prepare(

@@ -63,7 +63,7 @@ const TTL_PRESETS = {
   never: null,
 };
 const listMine = db.prepare(
-  `SELECT i.*, (SELECT COUNT(*) FROM access_logs a WHERE a.image_id = i.id) AS views
+  `SELECT i.*, (SELECT COUNT(*) FROM access_logs a WHERE a.image_id = i.id AND a.blocked_reason IS NULL) AS views
    FROM images i WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC`
 );
 const getMineByToken = db.prepare('SELECT * FROM images WHERE token = ? AND owner_id = ? AND deleted_at IS NULL');
@@ -80,7 +80,7 @@ const pageLogsAll = db.prepare(
    FROM access_logs a WHERE a.image_id = ? ORDER BY a.viewed_at DESC LIMIT ? OFFSET ?`
 );
 const LOG_SEARCH_WHERE =
-  '(ip LIKE @like OR ip_country LIKE @like OR user_agent LIKE @like OR geo_json LIKE @like OR client_json LIKE @like)';
+  '(ip LIKE @like OR ip_country LIKE @like OR user_agent LIKE @like OR geo_json LIKE @like OR client_json LIKE @like OR blocked_reason LIKE @like)';
 const countLogsSearch = db.prepare(
   `SELECT COUNT(*) AS n FROM access_logs WHERE image_id = @image_id AND ${LOG_SEARCH_WHERE}`
 );
