@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS access_logs (
   device_json  TEXT,       -- parsed browser/os/device
   headers_json TEXT,       -- captured request headers (view route only)
   client_json  TEXT,       -- client-side telemetry beacon (screen, tz, etc.)
-  blocked_reason TEXT      -- set when access was refused (VPN/proxy/Tor, no public IP…)
+  blocked_reason TEXT,     -- set when access was refused (VPN/proxy/Tor, no public IP…)
+  attempts     INTEGER NOT NULL DEFAULT 1  -- refused attempts collapsed into this row
 );
 
 CREATE TABLE IF NOT EXISTS leak_reports (
@@ -330,6 +331,7 @@ addColumn('images', 'moderation_score', 'moderation_score REAL');
 addColumn('images', 'moderation_details', 'moderation_details TEXT');
 addColumn('access_logs', 'link_label', 'link_label TEXT');
 addColumn('access_logs', 'blocked_reason', 'blocked_reason TEXT');
+addColumn('access_logs', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 1');
 
 // Gallery tables were added after initial release. Older DB files won't have
 // them, but SQLite can't IF NOT EXISTS on ALTER TABLE for missing tables.

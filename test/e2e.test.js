@@ -203,6 +203,12 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
 
   // Watermarked render
   await req('/i/' + token + '/view-check', form({ altcha: await solveAltcha(req) }));
+  const gatedPage = await req('/i/' + token);
+  assert.equal(gatedPage.status, 200);
+  const gatedHtml = await gatedPage.text();
+  assert.ok(gatedHtml.includes('/i/' + token + '/telemetry'), 'gated page wires up the shared collector');
+  assert.ok(/window\.__nusViewId/.test(gatedHtml), 'the render request reuses the collector view id');
+
   const viewId = crypto.randomBytes(16).toString('hex');
   r = await req('/i/' + token + '/render.png?v=' + viewId);
   assert.equal(r.status, 200);
@@ -223,6 +229,28 @@ test('consent gate, first-user signup (auto-approved user), upload, watermark, t
     body: JSON.stringify({ viewId, client: { screenW: 1920, screenH: 1080, platform: 'Linux x86_64' } }),
   });
   assert.equal(r.status, 204);
+
+  // The beacon is not a free row-writer: without the bot-check cookie, or
+  // without a view id, it writes nothing to the owner's log.
+  const logCountFor = () =>
+    db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = (SELECT id FROM images WHERE token = ?)')
+      .get(token).n;
+  const beforeBeacons = logCountFor();
+  const stranger = makeReq(app, newJar());
+  await consent(stranger, '/');
+  r = await stranger('/i/' + token + '/telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ viewId: crypto.randomBytes(16).toString('hex'), client: { screenW: 1 } }),
+  });
+  assert.equal(r.status, 204);
+  r = await req('/i/' + token + '/telemetry', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client: { screenW: 2 } }),
+  });
+  assert.equal(r.status, 204);
+  assert.equal(logCountFor(), beforeBeacons, 'ungated beacons create no access-log rows');
 
   // Logs page shows the client telemetry + search works
   const logs = await (await req('/dashboard/i/' + token + '/logs')).text();
@@ -318,6 +346,20 @@ test('admin: seed via DB, ban (view) blocks service-wide, audit recorded', async
   assert.equal(original.status, 200, 'admin can retrieve original from user files');
   assert.ok((original.headers.get('content-type') || '').includes('image/png'));
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = (SELECT id FROM images WHERE token = ?)').get(targetImage.token).n, accessLogCount, 'admin retrieval does not create viewer log');
+
+  // Admin can read any image's access log, and the read is audited.
+  const adminLogs = await req('/admin/images/' + targetImage.token + '/logs');
+  assert.equal(adminLogs.status, 200, 'admin opens an access log they do not own');
+  const adminLogsHtml = await adminLogs.text();
+  assert.ok(/Access log/.test(adminLogsHtml) && /firstuser/.test(adminLogsHtml), 'log names the owner');
+  assert.ok(!/Report As Leaker/.test(adminLogsHtml), 'reporting stays with the owner, not the admin');
+  assert.ok(
+    db.prepare("SELECT id FROM audit_log WHERE action = 'admin_view_access_log' ORDER BY id DESC LIMIT 1").get(),
+    'the admin access-log view is audited'
+  );
+  const filesHtml = await (await req('/admin/users/' + targetUser.id + '/files')).text();
+  assert.ok(filesHtml.includes('/admin/images/' + targetImage.token + '/logs'), 'file list links to the access log');
+  assert.equal((await req('/admin/images/nosuchtoken/logs')).status, 404);
 
   assert.equal((await req('/admin/users/' + targetUser.id + '/limits', form({ _csrf: csrf, upload_max_mb: '2', storage_limit_mb: '20' }))).status, 302);
   const limits = db.prepare('SELECT upload_max_bytes, storage_limit_bytes FROM users WHERE id = ?').get(targetUser.id);

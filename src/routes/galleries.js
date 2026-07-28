@@ -8,12 +8,16 @@ const { limiters } = require('../ratelimit');
 const { requireConsent, withScriptNonce } = require('../middleware');
 const ipintel = require('../ipintel');
 const logging = require('../logging');
+const clientTelemetry = require('../util/client-telemetry');
 const { uuidv7 } = require('../util/crypto');
 
 const router = express.Router();
 
-// Upper bound on blocked-attempt rows written for a single refused gallery hit.
-const BLOCKED_LOG_CAP = 50;
+// Upper bound on blocked-attempt rows written for a single refused gallery hit:
+// the block path is reachable by anyone holding the gallery token, so the
+// fan-out across a large gallery has to stay small. Only the first row carries
+// the captured headers.
+const BLOCKED_LOG_CAP = 10;
 
 // --- DB queries --------------------------------------------------------------
 const listMine = db.prepare(
@@ -180,11 +184,18 @@ router.get('/g/:token', limiters.view, requireConsent, withScriptNonce, async (r
   if (!assessment.allowed) {
     // A gallery link grants access to every image in it, so a refused attempt
     // belongs in each image's own access log (bounded, and deduped per IP).
-    for (const item of items.slice(0, BLOCKED_LOG_CAP)) {
-      try { logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`); } catch { /* non-fatal */ }
-    }
+    items.slice(0, BLOCKED_LOG_CAP).forEach((item, i) => {
+      try {
+        logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0 });
+      } catch { /* non-fatal */ }
+    });
     res.status(403);
-    return res.render('view-blocked', { reason: assessment.reason, message: blockMessage(assessment.reason) });
+    return res.render('view-blocked', {
+      reason: assessment.reason,
+      message: blockMessage(assessment.reason),
+      telemetryPath: `/g/${encodeURIComponent(g.token)}/telemetry`,
+      nonce: res.locals.nonce,
+    });
   }
 
   if (!items.length) return res.status(404).render('view-gone', { expired: false });
@@ -201,6 +212,26 @@ router.get('/g/:token', limiters.view, requireConsent, withScriptNonce, async (r
     })),
     nonce: res.locals.nonce,
   });
+});
+
+// Beacon from the blocked gallery page. Only refused viewers ever reach it: an
+// allowed viewer is redirected into the per-image view flow, which has its own
+// beacon. The details merge into the refused-attempt rows the block wrote.
+router.post('/g/:token/telemetry', limiters.telemetry, requireConsent, async (req, res) => {
+  const g = getGalleryLive.get(req.params.token);
+  if (!g) return res.status(204).end();
+
+  const assessment = await ipintel.assess(req);
+  if (assessment.allowed) return res.status(204).end();
+
+  const client = clientTelemetry.sanitize(req.body && req.body.client);
+  const items = listGalleryItems.all(g.id, Date.now()).filter(isViewable);
+  items.slice(0, BLOCKED_LOG_CAP).forEach((item, i) => {
+    try {
+      logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0, client });
+    } catch { /* non-fatal */ }
+  });
+  res.status(204).end();
 });
 
 module.exports = router;

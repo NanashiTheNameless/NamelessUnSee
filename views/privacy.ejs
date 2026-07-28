@@ -2,7 +2,7 @@
 <%- include('partials/legal-head', { pageTitle: pageTitle }) %>
 
   <h1>Privacy Policy</h1>
-  <p class="muted">Last updated: 2026-07-19. This instance is operated by
+  <p class="muted">Last updated: 2026-07-28. This instance is operated by
     <strong><%= operator.name %></strong><% if (operator.jurisdiction) { %> (<%= operator.jurisdiction %>)<% } %>.</p>
 
   <div class="warn">
@@ -58,6 +58,16 @@
   </ul>
   <p>This information is written to an access log <em>and</em> is rendered as a
     visible watermark into the copy of the image shown to you.</p>
+  <p><strong>If access is refused</strong>- because your connection appears to be a
+    VPN, proxy, Tor exit, or datacenter/hosting network, or because it cannot be
+    identified- the attempt is still recorded in the same access log, marked as
+    refused. Everything listed above is collected for a refused attempt as well:
+    your IP address and geolocation, the network assessment, your request headers
+    and derived device details, and the browser-exposed details, which the blocked
+    page gathers with the same script the view page uses. The only difference is
+    that <strong>no image is rendered or delivered to you</strong>, so a refused
+    attempt is never counted as a view. Repeated refusals from the same address are
+    collapsed into one entry with an attempt count.</p>
 
   <h2>4. Account data</h2>
   <p>If you register, we store your email address, username, a hashed (scrypt)
@@ -79,9 +89,13 @@
     Flagged uploads are queued for review by administrators. The fingerprint and
     moderation status are stored with the image record.</p>
   <p><strong>Administrator access:</strong> site administrators can retrieve the
-    original, un-watermarked file of any upload- for moderation review, abuse
+    original, un-watermarked file of any upload, and can read the access log of any
+    image- including the access log of an image that has already been deleted, for
+    as long as that log is retained (see §8)- for moderation review, abuse
     handling, and site operation. The guarantee that the original is never served
-    applies to viewers; it does not limit administrators of the instance.</p>
+    applies to viewers; it does not limit administrators of the instance. Each time
+    an administrator opens an image's access log, that action is itself recorded in
+    the administrative audit log.</p>
 
   <h2>4b. Leak reports</h2>
   <p>Account holders may report unauthorised redistribution of media they shared.
@@ -145,8 +159,14 @@
 
   <h2>8. Retention</h2>
   <p>Shared images are deleted automatically according to their retention settings
-    (a time limit and/or a maximum number of views). An image's access logs are kept
-    with the image record and are removed when that record is removed. Leak reports
+    (a time limit and/or a maximum number of views). An image's access log outlives
+    the image itself: it is kept for <%= logRetentionHours %> hours after the image
+    is deleted- whether that deletion was automatic or manual- so that the uploader
+    and administrators can still see who viewed it, and is then erased permanently.
+    Refused access attempts (for example from a VPN, proxy, or Tor) are recorded in
+    the same log and follow the same retention; repeated attempts from one address
+    are collapsed into a single entry with a count, and only the most recent
+    attempts are kept per image. Leak reports
     and their screenshot evidence are retained until resolved and removed by the
     operator. Account data is retained for the life of the account. The operator
     may retain limited records longer where necessary for security or to comply

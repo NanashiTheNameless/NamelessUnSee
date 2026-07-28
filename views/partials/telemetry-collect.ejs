@@ -1,0 +1,196 @@
+<%# Browser-detail collector, shared by the view page and the blocked page.
+    Expects: nonce, telemetryPath. Publishes window.__nusViewId so the caller
+    can tie its render request to the same view. %>
+<script nonce="<%= nonce %>">
+(function () {
+  var telemetryPath = <%- JSON.stringify(telemetryPath) %>;
+  var viewId = (function () {
+    try {
+      var a = new Uint8Array(16);
+      (crypto || {}).getRandomValues && crypto.getRandomValues(a);
+      return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    } catch (e) {
+      return String(Date.now()) + Math.random().toString(16).slice(2);
+    }
+  })();
+  window.__nusViewId = viewId;
+
+
+  function collect() {
+    var n = navigator || {};
+    var s = screen || {};
+    var conn = n.connection || {};
+    var tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+    return {
+      screenW: s.width, screenH: s.height, availW: s.availWidth, availH: s.availHeight,
+      viewportW: window.innerWidth, viewportH: window.innerHeight,
+      colorDepth: s.colorDepth, pixelRatio: window.devicePixelRatio,
+      timezone: tz, timezoneOffset: new Date().getTimezoneOffset(),
+      languages: (n.languages || [n.language]).slice(0, 10),
+      platform: n.platform || '', hardwareConcurrency: n.hardwareConcurrency,
+      deviceMemory: n.deviceMemory, maxTouchPoints: n.maxTouchPoints,
+      cookieEnabled: n.cookieEnabled, doNotTrack: n.doNotTrack,
+      referrer: document.referrer || '', connection: conn.effectiveType || ''
+    };
+  }
+
+  function collectWebgl() {
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return null;
+      var ext = gl.getExtension('WEBGL_debug_renderer_info');
+      return ext ? {
+        vendor: gl.getParameter(ext.UNMASKED_VENDOR_WEBGL) || '',
+        renderer: gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || ''
+      } : { vendor: '', renderer: '' };
+    } catch (e) { return null; }
+  }
+
+  function collectFonts() {
+    try {
+      if (!document.fonts || !document.fonts.check) return [];
+      return ['0xProto', 'Arial', 'Helvetica', 'Times New Roman', 'Courier New', 'Noto Sans']
+        .filter(function (font) { return document.fonts.check('12px "' + font + '"'); });
+    } catch (e) { return []; }
+  }
+
+  function collectUaData() {
+    var ua = navigator.userAgentData;
+    if (!ua) return Promise.resolve(null);
+    try {
+      return ua.getHighEntropyValues([
+        'architecture', 'bitness', 'model', 'platformVersion', 'uaFullVersion', 'fullVersionList'
+      ]).then(function (high) {
+        return {
+          brands: ua.brands || [], mobile: !!ua.mobile, platform: ua.platform || '',
+          architecture: high.architecture || '', bitness: high.bitness || '', model: high.model || '',
+          platformVersion: high.platformVersion || '', uaFullVersion: high.uaFullVersion || '',
+          fullVersionList: high.fullVersionList || []
+        };
+      }).catch(function () {
+        return { brands: ua.brands || [], mobile: !!ua.mobile, platform: ua.platform || '' };
+      });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function collectBattery() {
+    if (!navigator.getBattery) return Promise.resolve(null);
+    try {
+      return navigator.getBattery().then(function (battery) {
+        return {
+          charging: !!battery.charging,
+          level: typeof battery.level === 'number' ? battery.level : null,
+          chargingTime: battery.chargingTime,
+          dischargingTime: battery.dischargingTime
+        };
+      }).catch(function () { return null; });
+    } catch (e) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function collectMediaCapabilities() {
+    if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return Promise.resolve(null);
+    var configs = {
+      image: { type: 'file', video: { contentType: 'video/mp4; codecs="avc1.42E01E"', width: 640, height: 360, bitrate: 1000000, framerate: 30 } },
+      video: { type: 'file', video: { contentType: 'video/webm; codecs="vp8"', width: 640, height: 360, bitrate: 1000000, framerate: 30 } }
+    };
+    return Promise.all(Object.keys(configs).map(function (key) {
+      return navigator.mediaCapabilities.decodingInfo(configs[key]).then(function (info) {
+        return [key, { supported: !!info.supported, smooth: !!info.smooth, powerEfficient: !!info.powerEfficient }];
+      }).catch(function () { return [key, null]; });
+    })).then(function (entries) { return Object.fromEntries(entries); });
+  }
+
+  function collectDisplayPreferences() {
+    var query = function (q) {
+      try { return !!window.matchMedia(q).matches; } catch (e) { return null; }
+    };
+    return {
+      colorGamut: query('(color-gamut: rec2020)') ? 'rec2020' : query('(color-gamut: p3)') ? 'p3' : query('(color-gamut: srgb)') ? 'srgb' : null,
+      dark: query('(prefers-color-scheme: dark)'),
+      light: query('(prefers-color-scheme: light)'),
+      reducedMotion: query('(prefers-reduced-motion: reduce)'),
+      highContrast: query('(prefers-contrast: more)'),
+      forcedColors: query('(forced-colors: active)')
+    };
+  }
+
+  function collectPerformance() {
+    try {
+      var n = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+      var paints = performance.getEntriesByType && performance.getEntriesByType('paint') || [];
+      var out = { navigationType: n && n.type || null, redirectCount: n && n.redirectCount || 0,
+        domInteractive: n && Math.round(n.domInteractive) || null, domComplete: n && Math.round(n.domComplete) || null,
+        loadEventEnd: n && Math.round(n.loadEventEnd) || null, paints: {} };
+      paints.slice(0, 5).forEach(function (p) { out.paints[p.name] = Math.round(p.startTime); });
+      return out;
+    } catch (e) { return null; }
+  }
+
+  function collectCapabilities() {
+    return {
+      touch: 'ontouchstart' in window,
+      serviceWorker: !!navigator.serviceWorker,
+      webAssembly: typeof WebAssembly !== 'undefined',
+      webgl: !!document.createElement('canvas').getContext('webgl'),
+      webgl2: !!document.createElement('canvas').getContext('webgl2'),
+      indexedDb: !!window.indexedDB,
+      localStorage: (function () { try { return !!window.localStorage; } catch (e) { return false; } }()),
+      sessionStorage: (function () { try { return !!window.sessionStorage; } catch (e) { return false; } }())
+    };
+  }
+
+  function collectStorage() {
+    if (!navigator.storage || !navigator.storage.estimate) return Promise.resolve(null);
+    return navigator.storage.estimate().then(function (s) {
+      return { quota: Math.round(s.quota || 0), usage: Math.round(s.usage || 0) };
+    }).catch(function () { return null; });
+  }
+
+  function sendTelemetry(client) {
+    try {
+      fetch(telemetryPath, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ viewId: viewId, client: client }),
+        keepalive: true
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
+  var clientTelemetry = collect();
+  clientTelemetry.pixelDepth = screen.pixelDepth;
+  clientTelemetry.screenOrientation = screen.orientation && screen.orientation.type || null;
+  clientTelemetry.isExtended = typeof screen.isExtended === 'boolean' ? screen.isExtended : null;
+  clientTelemetry.locale = navigator.language || '';
+  clientTelemetry.vendor = navigator.vendor || '';
+  clientTelemetry.product = navigator.product || '';
+  clientTelemetry.appVersion = navigator.appVersion || '';
+  clientTelemetry.webdriver = !!navigator.webdriver;
+  clientTelemetry.pdfViewerEnabled = typeof navigator.pdfViewerEnabled === 'boolean' ? navigator.pdfViewerEnabled : null;
+  clientTelemetry.plugins = navigator.plugins ? navigator.plugins.length : null;
+  clientTelemetry.mimeTypes = navigator.mimeTypes ? navigator.mimeTypes.length : null;
+  clientTelemetry.globalPrivacyControl = typeof navigator.globalPrivacyControl === 'boolean' ? navigator.globalPrivacyControl : null;
+  clientTelemetry.onLine = typeof navigator.onLine === 'boolean' ? navigator.onLine : null;
+  clientTelemetry.displayPreferences = collectDisplayPreferences();
+  clientTelemetry.performance = collectPerformance();
+  clientTelemetry.capabilities = collectCapabilities();
+  clientTelemetry.webgl = collectWebgl();
+  clientTelemetry.fontFeatures = collectFonts();
+  Promise.race([
+    Promise.all([collectUaData(), collectBattery(), collectMediaCapabilities(), collectStorage()]),
+    new Promise(function (resolve) { setTimeout(function () { resolve([null, null, null]); }, 1500); })
+  ]).then(function (extra) {
+    clientTelemetry.userAgentData = extra[0];
+    clientTelemetry.battery = extra[1];
+    clientTelemetry.mediaCapabilities = extra[2];
+    clientTelemetry.storage = extra[3];
+    sendTelemetry(clientTelemetry);
+  }).catch(function () { sendTelemetry(clientTelemetry); });
+})();
+</script>

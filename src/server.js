@@ -16,6 +16,8 @@ const countReviewPending = db.prepare(
 const countLeakReports = db.prepare("SELECT COUNT(*) AS n FROM leak_reports WHERE status = 'open'");
 const { baseSecurity, enforceViewBan } = require('./middleware');
 const storage = require('./storage');
+const logging = require('./logging');
+const accessLog = require('./access-log');
 
 const app = express();
 
@@ -133,6 +135,10 @@ function runMaintenance() {
       markPurged.run(now, img.id);
     }
     if (expired.length) console.log(`[NamelessUnSee] purged ${expired.length} expired image(s)`);
+    const prunedBlocked = logging.pruneBlockedLogs();
+    if (prunedBlocked) console.log(`[NamelessUnSee] pruned ${prunedBlocked} old blocked-attempt log row(s)`);
+    const expiredLogs = accessLog.purgeExpired(now);
+    if (expiredLogs) console.log(`[NamelessUnSee] erased ${expiredLogs} access-log row(s) past the retention window`);
     sweepSessions();
     bans.sweepExpired();
   } catch (e) {

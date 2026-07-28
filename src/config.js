@@ -66,6 +66,10 @@ const config = {
   dbPath: path.join(DATA_DIR, 'namelessunsee.sqlite'),
   sourceUrl: (process.env.SOURCE_URL || 'https://github.com/NanashiTheNameless/NamelessUnSee').replace(/\/+$/, ''),
   imageTtlHours: int(process.env.IMAGE_TTL_HOURS, 24),
+  // How long an image's access log outlives the image itself. The forensic
+  // value of a log outlasts the media, but not indefinitely: after this window
+  // the rows are deleted for good.
+  logRetentionAfterDeleteHours: int(process.env.LOG_RETENTION_AFTER_DELETE_HOURS, 48),
   maxUploadBytes: int(process.env.MAX_UPLOAD_MB, 500) * 1024 * 1024,
   maxUploadBytesHard: int(process.env.MAX_UPLOAD_HARD_MB, 4096) * 1024 * 1024,
   maxStorageBytes: int(process.env.MAX_STORAGE_MB, 1024) * 1024 * 1024,

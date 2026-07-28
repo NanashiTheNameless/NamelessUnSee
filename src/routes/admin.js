@@ -9,6 +9,7 @@ const { requireAdmin, requireOwner, verifyCsrf } = require('../auth');
 const bans = require('../bans');
 const audit = require('../audit');
 const storage = require('../storage');
+const accessLog = require('../access-log');
 const notify = require('../notify');
 const { limiters } = require('../ratelimit');
 const { beneath } = require('../util/safe-path');
@@ -26,6 +27,13 @@ const setRank = db.prepare("UPDATE users SET rank = ? WHERE id = ? AND rank != '
 const setDecisionNotes = db.prepare('UPDATE users SET decision_note = ?, decision_internal_note = ? WHERE id = ?');
 const setUserLimits = db.prepare('UPDATE users SET upload_max_bytes = ?, storage_limit_bytes = ? WHERE id = ?');
 const listUserImages = db.prepare('SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+const listUserDeletedImages = db.prepare(
+  `SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
+   ORDER BY deleted_at DESC`
+);
+const getImageForLogs = db.prepare(
+  'SELECT * FROM images WHERE token = ? AND (deleted_at IS NULL OR deleted_at > ?)'
+);
 const getUserImage = db.prepare('SELECT * FROM images WHERE owner_id = ? AND token = ? AND deleted_at IS NULL');
 const softDeleteUserImage = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL');
 const listReports = db.prepare(
@@ -113,7 +121,42 @@ router.post('/admin/audit/:id/delete', requireOwner, verifyCsrf, (req, res) => {
 router.get('/admin/users/:id/files', requireAdmin, (req, res) => {
   const user = getUser.get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not found', message: 'No such user.' });
-  res.render('admin-user-files', { target: user, images: listUserImages.all(user.id) });
+  res.render('admin-user-files', {
+    target: user,
+    images: listUserImages.all(user.id),
+    recentlyDeleted: listUserDeletedImages.all(user.id, accessLog.retentionCutoff()),
+    logRetentionHours: config.logRetentionAfterDeleteHours,
+  });
+});
+
+// Admins can read any image's access log, including one whose media is already
+// gone- the log outlives it by the retention window.
+router.get('/admin/images/:token/logs', requireAdmin, (req, res) => {
+  const image = getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
+  if (!image) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
+  const owner = getUser.get(image.owner_id) || null;
+
+  const q = (req.query.q || '').toString().trim().slice(0, 100);
+  audit.record(
+    req.user,
+    'admin_view_access_log',
+    `${image.token} owned by ${owner ? owner.username : 'unknown'}${image.deleted_at ? ' (deleted image)' : ''}`,
+    image.owner_id
+  );
+  res.render('logs', {
+    me: req.user,
+    image,
+    admin: true,
+    owner,
+    basePath: `/admin/images/${encodeURIComponent(image.token)}/logs`,
+    backHref: owner ? `/admin/users/${encodeURIComponent(owner.id)}/files` : '/admin',
+    backLabel: owner ? `Files for ${owner.username}` : 'Admin',
+    retainedUntil: accessLog.retainedUntil(image),
+    baseUrl: config.baseUrl,
+    q,
+    reported: false,
+    ...accessLog.readPage(image.id, { q, page: req.query.page }),
+  });
 });
 
 router.get('/admin/users/:id/files/:token', limiters.admin, requireAdmin, async (req, res) => {

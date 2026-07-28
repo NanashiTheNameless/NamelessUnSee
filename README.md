@@ -32,6 +32,20 @@ successor to the defunct [unsee.cc](https://unsee.cc).
   renderer, battery state, media capabilities, and limited font feature checks).
   The warning and Privacy Policy disclose this in plain language; the project
   does not hide that it logs.
+- **Refused viewers are logged too- in full.** A viewer turned away for using a
+  VPN, proxy, Tor or datacenter egress- or because their network could not be
+  identified- still lands in the owner's access log, flagged as a refused
+  attempt. The blocked page runs the same collector the view page does, so the
+  entry carries the IP, geolocation, network assessment, request headers, derived
+  device details **and** the browser-exposed details (screen, timezone, GPU,
+  fonts...). No media is ever rendered for them, so those entries never count as
+  views and cannot be reported as leaks. Repeat attempts from one address
+  collapse into a single entry carrying an attempt count.
+- **Access logs outlive the image.** When an upload is deleted- automatically or
+  by hand- its access log is kept for a further 48 hours
+  (`LOG_RETENTION_AFTER_DELETE_HOURS`), still readable by the uploader from a
+  "Recently deleted" section on the dashboard, and by admins. After that window a
+  maintenance pass erases it for good.
 - **The warning, ToS and Privacy pages perform no application collection.** They
   perform no application logging or geolocation and use only their own text,
   the site font, a self-hosted proof-of-work bot check where applicable, and a
@@ -85,7 +99,9 @@ successor to the defunct [unsee.cc](https://unsee.cc).
   review queue. The sidecar is internal-only; trusted users skip scanning.
 - **Admin panel.** Approve/deny account requests, promote/demote admins, and
   **ban by IP/CIDR, email, or user**- independently for *account access*
-  (signup/login) and/or *viewing the service at all*.
+  (signup/login) and/or *viewing the service at all*. Admins can also open the
+  **access log of any image**, including one already deleted but still inside the
+  log-retention window; every such view is written to the audit log.
 - **Per-image retention, uploader's choice.** Pick how long an image is kept
   and/or a **maximum number of views** before instant deletion. By default the
   retention **timer starts on first view** (not at upload)- or start it
@@ -107,6 +123,9 @@ share link  ─►  /welcome (agree + ALTCHA)  ─►  consent cookie (session)
                                    ▼
                        /i/:token/render.png   ── watermarked, per-viewer, no-store
                        /i/:token/telemetry    ── client-side beacon (logged)
+
+  refused viewer  ─►  blocked page  ─►  /i/:token/telemetry
+                      (no media)        same beacon, logged as a refused attempt
 ```
 
 ## Tech
@@ -205,6 +224,7 @@ container storage and upload it directly to R2.
 | `SOURCE_URL` | this repo | Source-code link shown in the footer and on info pages |
 | `DATA_DIR` | `./data` | Where the SQLite DB and uploaded originals live |
 | `IMAGE_TTL_HOURS` | `24` | Retention before an upload is auto-purged (`0` = never) |
+| `LOG_RETENTION_AFTER_DELETE_HOURS` | `48` | How long an image's access log survives the image's deletion. During the window the uploader and admins can still read it; afterwards a maintenance pass erases the rows. `0` erases them on the next pass after deletion |
 | `MAX_UPLOAD_MB` | `500` | Default max upload size per file |
 | `MAX_REPORT_MB` | `10` | Max size per leak-report screenshot |
 | `MAX_UPLOAD_HARD_MB` | `4096` | Absolute ceiling for admin per-user upload overrides |
@@ -285,6 +305,14 @@ container storage and upload it directly to R2.
 - **Passwords** hashed with per-password random salts using scrypt (Node stdlib,
   OWASP baseline parameters); verification uses constant-time comparison.
 - The **original image is never served**- there is no route that returns it.
+- **The access log is not a free-for-all writer.** A telemetry beacon can only
+  ever write onto a *view* row if the sender passed the bot check and names the
+  view it belongs to- so holding a share token is not enough to fabricate views.
+  A beacon from a refused viewer is accepted (that is the point: they get
+  profiled too) but it merges into their refused-attempt row, which is a separate
+  class of row that never counts as a view.
+- **Admin access to logs is audited.** Opening any image's access log as an admin
+  writes an `admin_view_access_log` entry naming the image and its owner.
 
 ## Attribution & licensing
 

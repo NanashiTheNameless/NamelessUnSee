@@ -10,6 +10,7 @@ const { requireAuth, verifyCsrf } = require('../auth');
 const { requireConsent, widgetPage } = require('../middleware');
 const { limiters } = require('../ratelimit');
 const { randomToken } = require('../util/crypto');
+const accessLog = require('../access-log');
 const watermark = require('../watermark');
 const { verifySolution } = require('../altcha');
 const notify = require('../notify');
@@ -40,7 +41,8 @@ const insertReport = db.prepare(
 const getOwnerLog = db.prepare(
   `SELECT a.*, i.token, i.title
    FROM access_logs a JOIN images i ON i.id = a.image_id
-   WHERE a.id = ? AND i.token = ? AND i.owner_id = ? AND i.deleted_at IS NULL
+   WHERE a.id = ? AND i.token = ? AND i.owner_id = ?
+     AND (i.deleted_at IS NULL OR i.deleted_at > ?)
      AND a.blocked_reason IS NULL`
 );
 const existingLogReport = db.prepare('SELECT id FROM leak_reports WHERE access_log_id = ?');
@@ -140,7 +142,7 @@ router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsen
 });
 
 router.get('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, (req, res) => {
-  const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id);
+  const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
   if (!log) return res.status(404).render('error', { title: 'Not found', message: 'No such access log entry.' });
   if (existingLogReport.get(log.id)) return res.redirect(`/dashboard/i/${encodeURIComponent(log.token)}/logs`);
   res.render('report-log', { image: log, log, error: null });
@@ -148,7 +150,7 @@ router.get('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, (r
 
 router.post('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, limiters.report, (req, res) => {
   proofUpload.array('proofs', 15)(req, res, async (err) => {
-    const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id);
+    const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
     const fail = (message, status = 400) => {
       removeProofs(req.files);
       return res.status(status).render('report-log', { image: log || { token: req.params.token }, log, error: message });

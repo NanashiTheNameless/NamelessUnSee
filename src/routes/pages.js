@@ -55,6 +55,7 @@ router.get('/tos', legalPage, (req, res) => {
   res.render('tos', {
     operator: config.operator,
     imageTtlHours: config.imageTtlHours,
+    logRetentionHours: config.logRetentionAfterDeleteHours,
     contactObfuscated: contactObfuscated(),
   });
 });
@@ -63,6 +64,7 @@ router.get('/privacy', legalPage, (req, res) => {
   res.render('privacy', {
     operator: config.operator,
     imageTtlHours: config.imageTtlHours,
+    logRetentionHours: config.logRetentionAfterDeleteHours,
     contactObfuscated: contactObfuscated(),
   });
 });

@@ -45,15 +45,22 @@
   @media (max-width:520px) { .log-field { grid-template-columns:1fr; gap:.1rem; } }
 </style>
 <div class="wrap">
-  <p><a href="/dashboard">← Dashboard</a></p>
+  <p><a href="<%= backHref %>">← <%= backLabel %></a></p>
   <h1>Access log</h1>
   <% if (reported) { %><div class="notice">Leaker report submitted to administrators.</div><% } %>
   <p class="muted mono"><%= image.title || '(untitled)' %> - <%= baseUrl %>/i/<%= image.token %></p>
+  <% if (admin) { %>
+    <p class="muted">Owner: <span class="mono"><%= owner ? owner.username : 'unknown' %></span>. This view is recorded in the audit log.</p>
+  <% } %>
+  <% if (retainedUntil) { %>
+    <div class="notice">This image has been deleted. Its access log is kept until
+      <%= new Date(retainedUntil).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %>, then erased.</div>
+  <% } %>
 
-  <form method="get" action="/dashboard/i/<%= image.token %>/logs" style="display:flex; gap:.5rem; margin:.8rem auto; max-width:520px">
+  <form method="get" action="<%= basePath %>" style="display:flex; gap:.5rem; margin:.8rem auto; max-width:520px">
     <input type="text" name="q" value="<%= q %>" placeholder="Search IP, country, device, city, org…" style="flex:1">
     <button class="btn secondary small" type="submit">Search</button>
-    <% if (q) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs">Clear</a><% } %>
+    <% if (q) { %><a class="btn secondary small" href="<%= basePath %>">Clear</a><% } %>
   </form>
 
   <p class="muted"><%= total %> match<%= total === 1 ? '' : 'es' %><% if (q) { %> for "<%= q %>"<% } %> -
@@ -69,6 +76,9 @@
         <strong class="mono"><%= r.ip || 'unknown' %></strong>
         <% if (r.blocked_reason) { %>
           <span class="pill rejected">blocked: <%= blockedLabel(r.blocked_reason) %></span>
+          <% if (r.attempts > 1) { %>
+            <span class="pill">&times;<%= r.attempts %> attempts</span>
+          <% } %>
         <% } %>
         <% if (r.geo && r.geo.proxy && r.geo.proxy.isProxy) { %>
           <span class="pill rejected">proxy/VPN: <%= r.geo.proxy.type || 'yes' %></span>
@@ -117,10 +127,10 @@
 
       <div style="margin-top:.7rem">
         <% if (r.blocked_reason) { %>
-          <span class="muted">Access was refused - no image was delivered to this viewer.</span>
+          <span class="muted">Access was refused<%= r.attempts > 1 ? ' on ' + r.attempts + ' attempts' : '' %> - no image was delivered to this viewer.</span>
         <% } else if (r.reported) { %>
           <button class="btn secondary small" type="button" disabled>Already Reported</button>
-        <% } else { %>
+        <% } else if (!admin) { %>
           <a class="btn danger small" href="/dashboard/i/<%= image.token %>/logs/<%= r.id %>/report">Report As Leaker</a>
         <% } %>
       </div>
@@ -135,9 +145,9 @@
   <% if (totalPages > 1) { %>
     <div style="display:flex; gap:.6rem; align-items:center; margin-top:1rem">
       <% var qs = q ? ('&q=' + encodeURIComponent(q)) : ''; %>
-      <% if (page > 1) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs?page=<%= page-1 %><%= qs %>">← Prev</a><% } %>
+      <% if (page > 1) { %><a class="btn secondary small" href="<%= basePath %>?page=<%= page-1 %><%= qs %>">← Prev</a><% } %>
       <span class="muted">Page <%= page %> / <%= totalPages %></span>
-      <% if (page < totalPages) { %><a class="btn secondary small" href="/dashboard/i/<%= image.token %>/logs?page=<%= page+1 %><%= qs %>">Next →</a><% } %>
+      <% if (page < totalPages) { %><a class="btn secondary small" href="<%= basePath %>?page=<%= page+1 %><%= qs %>">Next →</a><% } %>
     </div>
   <% } %>
 </div>

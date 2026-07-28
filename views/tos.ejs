@@ -2,10 +2,9 @@
 <%- include('partials/legal-head', { pageTitle: pageTitle }) %>
 
   <h1>Terms of Service</h1>
-  <p class="muted">Last updated: 2026-07-19. These terms govern your use of this
+  <p class="muted">Last updated: 2026-07-28. These terms govern your use of this
     NamelessUnSee instance operated by <strong><%= operator.name %></strong><% if (operator.jurisdiction) { %>,
-    based in <%= operator.jurisdiction %><% } %>. The operator should have these
-    reviewed by qualified counsel for their jurisdiction before public operation.</p>
+    based in <%= operator.jurisdiction %><% } %>.</p>
 
   <div class="warn">
     By continuing past the warning page, or by creating an account, you agree to
@@ -18,6 +17,9 @@
     temporary, traceable basis. Each time shared content is viewed, the viewer is
     served a copy that is watermarked with information identifying them (including
     their IP address, approximate location, and device), and the visit is logged.
+    Attempts that are refused- for example from a VPN, proxy, Tor exit, or
+    datacenter network, or where the connection cannot be identified- are logged
+    in the same way and in the same detail, except that no content is delivered.
     The purpose is to deter and trace the unauthorised redistribution of shared
     content. The service does not deliver, and does not offer any means to obtain,
     an un-watermarked copy of shared content.</p>
@@ -92,7 +94,8 @@
     operator-managed blocklist of known-prohibited content, and optionally by a
     locally run content classifier). Flagged uploads may be withheld from viewing
     pending review, and administrators may access uploaded media- including the
-    original file- for moderation, abuse handling, and site operation. The
+    original file- and the access log of any image, including images that have
+    already been deleted, for moderation, abuse handling, and site operation. The
     operator may remove or quarantine any upload.</p>
   <p>You are responsible for your own compliance with data-protection law with
     respect to any personal data contained in images you upload and any access logs
@@ -118,6 +121,10 @@
       their retention settings<% if (imageTtlHours) { %> (default retention on this
       instance: <%= imageTtlHours %> hour<%= imageTtlHours === 1 ? '' : 's' %>)<% } %>.
       There is no guarantee of retention, availability, backup, or recovery.</li>
+    <li>An image's access log is kept for <%= logRetentionHours %> hours after that
+      image is deleted, and remains readable by the uploader and by administrators
+      during that window; it is then erased. Deleting an image does not immediately
+      delete the record of who viewed it.</li>
     <li>The service is provided on an "as available" basis and may change, be
       suspended, or be discontinued at any time.</li>
     <li>These Terms may be updated; the "last updated" date will change and

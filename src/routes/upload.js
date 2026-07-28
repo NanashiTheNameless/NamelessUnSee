@@ -12,6 +12,7 @@ const { limiters } = require('../ratelimit');
 const watermark = require('../watermark');
 const moderation = require('../moderation');
 const storage = require('../storage');
+const accessLog = require('../access-log');
 const ranks = require('../ranks');
 const notify = require('../notify');
 const { beneath } = require('../util/safe-path');
@@ -73,21 +74,14 @@ const storageUsed = db.prepare('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM
 const insertGallery = db.prepare('INSERT INTO galleries (token, owner_id, title, created_at) VALUES (?, ?, ?, ?)');
 const addGalleryItem = db.prepare('INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)');
 
-const LOGS_PAGE_SIZE = 50;
-const countLogsAll = db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?');
-const pageLogsAll = db.prepare(
-  `SELECT a.*, EXISTS(SELECT 1 FROM leak_reports r WHERE r.access_log_id = a.id) AS reported
-   FROM access_logs a WHERE a.image_id = ? ORDER BY a.viewed_at DESC LIMIT ? OFFSET ?`
+// A deleted image keeps its access log for the retention window, so the owner
+// can still read (and report from) it after the media itself is gone.
+const getMineForLogs = db.prepare(
+  'SELECT * FROM images WHERE token = ? AND owner_id = ? AND (deleted_at IS NULL OR deleted_at > ?)'
 );
-const LOG_SEARCH_WHERE =
-  '(ip LIKE @like OR ip_country LIKE @like OR user_agent LIKE @like OR geo_json LIKE @like OR client_json LIKE @like OR blocked_reason LIKE @like)';
-const countLogsSearch = db.prepare(
-  `SELECT COUNT(*) AS n FROM access_logs WHERE image_id = @image_id AND ${LOG_SEARCH_WHERE}`
-);
-const pageLogsSearch = db.prepare(
-  `SELECT a.*, EXISTS(SELECT 1 FROM leak_reports r WHERE r.access_log_id = a.id) AS reported
-   FROM access_logs a WHERE a.image_id = @image_id AND ${LOG_SEARCH_WHERE}
-   ORDER BY a.viewed_at DESC LIMIT @limit OFFSET @offset`
+const listMineDeleted = db.prepare(
+  `SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
+   ORDER BY deleted_at DESC`
 );
 
 router.get('/dashboard', requireAuth, (req, res) => {
@@ -96,6 +90,8 @@ router.get('/dashboard', requireAuth, (req, res) => {
   res.render('dashboard', {
     me: req.user,
     images: listMine.all(req.user.id),
+    recentlyDeleted: listMineDeleted.all(req.user.id, accessLog.retentionCutoff()),
+    logRetentionHours: config.logRetentionAfterDeleteHours,
     baseUrl: config.baseUrl,
     ttlHours: config.imageTtlHours,
     maxMb: Number.isFinite(effective.uploadBytes) ? Math.round(effective.uploadBytes / (1024 * 1024)) : null,
@@ -382,43 +378,23 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
 });
 
 router.get('/dashboard/i/:token/logs', requireAuth, (req, res) => {
-  const img = getMineByToken.get(req.params.token, req.user.id);
+  const img = getMineForLogs.get(req.params.token, req.user.id, accessLog.retentionCutoff());
   if (!img) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
 
   const q = (req.query.q || '').toString().trim().slice(0, 100);
-  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-  const offset = (page - 1) * LOGS_PAGE_SIZE;
-
-  let total;
-  let rows;
-  if (q) {
-    const like = '%' + q + '%';
-    total = countLogsSearch.get({ image_id: img.id, like }).n;
-    rows = pageLogsSearch.all({ image_id: img.id, like, limit: LOGS_PAGE_SIZE, offset });
-  } else {
-    total = countLogsAll.get(img.id).n;
-    rows = pageLogsAll.all(img.id, LOGS_PAGE_SIZE, offset);
-  }
-
-  const logs = rows.map((r) => ({
-    ...r,
-    device: safeParse(r.device_json),
-    geo: safeParse(r.geo_json),
-    headers: safeParse(r.headers_json),
-    client: safeParse(r.client_json),
-  }));
-
   res.render('logs', {
     me: req.user,
     image: img,
-    logs,
+    admin: false,
+    owner: null,
+    basePath: `/dashboard/i/${encodeURIComponent(img.token)}/logs`,
+    backHref: '/dashboard',
+    backLabel: 'Dashboard',
+    retainedUntil: accessLog.retainedUntil(img),
     baseUrl: config.baseUrl,
     q,
-    page,
-    pageSize: LOGS_PAGE_SIZE,
-    total,
-    totalPages: Math.max(1, Math.ceil(total / LOGS_PAGE_SIZE)),
     reported: req.query.reported === '1',
+    ...accessLog.readPage(img.id, { q, page: req.query.page }),
   });
 });
 
@@ -467,13 +443,5 @@ router.post('/dashboard/i/:token/delete', requireAuth, verifyCsrf, (req, res) =>
   }
   res.redirect('/dashboard');
 });
-
-function safeParse(s) {
-  try {
-    return s ? JSON.parse(s) : null;
-  } catch {
-    return null;
-  }
-}
 
 module.exports = router;

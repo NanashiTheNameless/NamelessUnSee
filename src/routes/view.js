@@ -11,6 +11,7 @@ const ipintel = require('../ipintel');
 const { limiters } = require('../ratelimit');
 const { requireConsent, withScriptNonce } = require('../middleware');
 const { verifySolution } = require('../altcha');
+const clientTelemetry = require('../util/client-telemetry');
 const storage = require('../storage');
 
 const router = express.Router();
@@ -172,7 +173,17 @@ router.get(['/i/:token', '/r/:token'], limiters.view, requireConsent, withScript
     // A refused viewer is still forensic signal for the owner: log the attempt.
     try { logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
     res.status(403);
-    return res.render('view-blocked', { reason: assessment.reason, message: blockMessage(assessment.reason) });
+    const publicPath = req.publicToken
+      ? `/r/${encodeURIComponent(req.publicToken)}`
+      : `/i/${encodeURIComponent(img.token)}`;
+    return res.render('view-blocked', {
+      reason: assessment.reason,
+      message: blockMessage(assessment.reason),
+      // The blocked page runs the same collector the view page does: a refused
+      // viewer is still profiled, onto their refused-attempt row.
+      telemetryPath: `${publicPath}/telemetry`,
+      nonce: res.locals.nonce,
+    });
   }
 
   res.setHeader('Cache-Control', 'no-store');
@@ -319,37 +330,27 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
 });
 
 // --- Client-side telemetry beacon -----------------------------------------
-router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, requireConsent, (req, res) => {
+router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, requireConsent, async (req, res) => {
   const img = getLive.get(req.imageToken || req.params.token);
   if (!img) return res.status(204).end();
-  const viewId = sanitizeViewId(req.body && req.body.viewId);
 
-  const c = (req.body && req.body.client) || {};
-  const client = {};
-  const keys = [
-    'screenW', 'screenH', 'availW', 'availH', 'viewportW', 'viewportH',
-    'colorDepth', 'pixelDepth', 'pixelRatio', 'screenOrientation', 'isExtended',
-    'timezone', 'timezoneOffset', 'languages', 'locale',
-    'platform', 'hardwareConcurrency', 'deviceMemory', 'maxTouchPoints',
-    'vendor', 'product', 'appVersion', 'webdriver', 'pdfViewerEnabled',
-    'plugins', 'mimeTypes', 'cookieEnabled', 'doNotTrack', 'globalPrivacyControl',
-    'onLine', 'referrer', 'connection', 'displayPreferences', 'storage',
-    'performance', 'capabilities', 'userAgentData', 'webgl',
-    'battery', 'mediaCapabilities', 'fontFeatures',
-  ];
-  const bounded = (value, depth = 0) => {
-    if (typeof value === 'string') return value.slice(0, 300);
-    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-    if (typeof value === 'boolean' || value === null) return value;
-    if (Array.isArray(value)) return value.slice(0, 20).map((v) => bounded(v, depth + 1));
-    if (value && typeof value === 'object' && depth < 2) {
-      return Object.fromEntries(Object.entries(value).slice(0, 20).map(([k, v]) => [k.slice(0, 80), bounded(v, depth + 1)]));
-    }
-    return undefined;
-  };
-  for (const k of keys) {
-    if (c[k] !== undefined) client[k] = bounded(c[k]);
+  const client = clientTelemetry.sanitize(req.body && req.body.client);
+
+  // A refused viewer is profiled too: their browser details merge into the
+  // refused-attempt row the block already created. No bot-check cookie is
+  // required on this path because a blocked viewer never reaches the bot check.
+  const assessment = await ipintel.assess(req);
+  if (!assessment.allowed) {
+    try { logging.logBlocked(req, img.id, assessment, null, { client }); } catch { /* non-fatal */ }
+    return res.status(204).end();
   }
+
+  // For an allowed viewer the beacon writes onto a view row, so it has to come
+  // from someone who cleared the bot check and names the view it belongs to.
+  // Otherwise anyone holding the token could mint rows that read as real views.
+  if (!req.signedCookies || req.signedCookies[VIEW_GATE_COOKIE] !== img.token) return res.status(204).end();
+  const viewId = sanitizeViewId(req.body && req.body.viewId);
+  if (!viewId) return res.status(204).end();
 
   try {
     logging.logClient(img.id, viewId, client);

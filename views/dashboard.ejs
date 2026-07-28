@@ -101,6 +101,23 @@
     </div>
   <% }); %>
 
+  <% if (recentlyDeleted && recentlyDeleted.length) { %>
+    <div class="card" style="max-width:980px">
+      <h2 style="margin-top:0">Recently deleted</h2>
+      <p class="muted">These uploads are gone, but their access logs are kept for
+        <%= logRetentionHours %> hours after deletion so you can still see who viewed them.</p>
+      <% recentlyDeleted.forEach(function(img){ %>
+        <div style="display:flex; gap:1rem; flex-wrap:wrap; align-items:baseline; margin-top:.6rem">
+          <strong><%= img.title || '(untitled)' %></strong>
+          <span class="muted mono"><%= img.token %></span>
+          <span class="spacer" style="flex:1"></span>
+          <span class="muted">deleted <%= fmtDate(img.deleted_at) %></span>
+          <a class="btn secondary small" href="/dashboard/i/<%= img.token %>/logs">View access log</a>
+        </div>
+      <% }); %>
+    </div>
+  <% } %>
+
   <div class="card" style="max-width:980px">
     <h2 style="margin-top:0">Create a gallery</h2>
     <p class="muted">Combine multiple uploads into one share link (/g/&lt;token&gt;).</p>

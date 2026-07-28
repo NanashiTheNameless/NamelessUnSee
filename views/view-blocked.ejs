@@ -8,6 +8,13 @@
     <p class="muted">This image is only shown to connections that can be fully
       identified. Turn off any VPN, proxy, or Tor connection and try again from a
       normal network.</p>
+    <p class="muted">This refused attempt is recorded in the uploader's access
+      log- your network details, and the same browser details a successful view
+      would have collected, exactly as the Privacy Policy describes. No image was
+      shown to you.</p>
   </div>
 </div>
+<% if (typeof telemetryPath !== 'undefined' && telemetryPath) { %>
+  <%- include('partials/telemetry-collect', { nonce: nonce, telemetryPath: telemetryPath }) %>
+<% } %>
 <%- include('partials/foot') %>

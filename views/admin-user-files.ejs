@@ -23,11 +23,29 @@
           <td class="muted"><%= new Date(image.created_at).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %></td>
           <td>
             <a class="btn secondary small" href="/admin/users/<%= target.id %>/files/<%= encodeURIComponent(image.token) %>" target="_blank" rel="noreferrer">Retrieve Original</a>
+            <a class="btn secondary small" href="/admin/images/<%= encodeURIComponent(image.token) %>/logs">Access Log</a>
             <form method="post" action="/admin/users/<%= encodeURIComponent(target.id) %>/files/<%= encodeURIComponent(image.token) %>/delete" onsubmit="return confirm('Delete this file?');" style="display:inline">
               <input type="hidden" name="_csrf" value="<%= csrf %>">
               <button class="btn danger small" type="submit">Delete</button>
             </form>
           </td>
+        </tr>
+      <% }); %>
+      </tbody>
+    </table></div></div>
+  <% } %>
+
+  <% if (recentlyDeleted && recentlyDeleted.length) { %>
+    <h2>Recently deleted</h2>
+    <p class="muted">The media is gone. Access logs survive deletion by <%= logRetentionHours %> hours, then are erased.</p>
+    <div class="card"><div class="scroll"><table>
+      <thead><tr><th>Title</th><th>Deleted</th><th></th></tr></thead>
+      <tbody>
+      <% recentlyDeleted.forEach(function(image){ %>
+        <tr>
+          <td><%= image.title || '(untitled)' %><br><span class="muted mono"><%= image.token %></span></td>
+          <td class="muted"><%= new Date(image.deleted_at).toISOString().replace('T',' ').replace(/\..+/, ' UTC') %></td>
+          <td><a class="btn secondary small" href="/admin/images/<%= encodeURIComponent(image.token) %>/logs">Access Log</a></td>
         </tr>
       <% }); %>
       </tbody>

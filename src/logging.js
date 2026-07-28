@@ -77,35 +77,54 @@ function logRender(req, imageId, viewId, assessment, linkLabel = null) {
 // window refresh the existing row instead of piling up on every refresh.
 const BLOCKED_DEDUPE_MS = 10 * 60 * 1000;
 
+// Owner-visible cap on refused attempts kept per image. Anyone holding a token
+// can reach the block path, so without a ceiling a distributed scan could grow
+// the log without bound; the newest rows are the ones worth keeping.
+const BLOCKED_LOG_KEEP = 200;
+
 const insertBlocked = db.prepare(`
 INSERT INTO access_logs
-  (image_id, view_id, viewed_at, ip, ip_country, geo_json, user_agent, device_json, headers_json, client_json, link_label, blocked_reason)
+  (image_id, view_id, viewed_at, ip, ip_country, geo_json, user_agent, device_json, headers_json, client_json, link_label, blocked_reason, attempts)
 VALUES
-  (@image_id, NULL, @viewed_at, @ip, @ip_country, @geo_json, @user_agent, @device_json, @headers_json, NULL, @link_label, @blocked_reason)
+  (@image_id, NULL, @viewed_at, @ip, @ip_country, @geo_json, @user_agent, @device_json, @headers_json, @client_json, @link_label, @blocked_reason, 1)
+RETURNING id
 `);
 
+const findRecentBlocked = db.prepare(`
+SELECT id FROM access_logs
+WHERE image_id = @image_id AND blocked_reason = @blocked_reason
+  AND ip IS @ip AND viewed_at >= @since
+ORDER BY viewed_at DESC LIMIT 1
+`);
+
+// A repeat attempt refreshes the row and bumps the counter. Data that only some
+// requests carry (headers, the browser beacon) is merged, never blanked.
 const touchBlocked = db.prepare(`
 UPDATE access_logs SET
   viewed_at    = @viewed_at,
   ip_country   = @ip_country,
   geo_json     = @geo_json,
   user_agent   = @user_agent,
-  device_json  = @device_json,
-  headers_json = @headers_json,
+  device_json  = COALESCE(@device_json, device_json),
+  headers_json = COALESCE(@headers_json, headers_json),
+  client_json  = COALESCE(@client_json, client_json),
+  attempts     = attempts + @attempt_delta,
   link_label   = COALESCE(@link_label, link_label)
-WHERE id = (
-  SELECT id FROM access_logs
-  WHERE image_id = @image_id AND blocked_reason = @blocked_reason
-    AND ip IS @ip AND viewed_at >= @since
-  ORDER BY viewed_at DESC LIMIT 1
-)
+WHERE id = @id
 `);
 
 /**
  * Record a refused access attempt. Same shape as logRender, but the row is
  * flagged with the block reason and never counts as a delivered view.
+ * Options:
+ *   withHeaders  store the captured request headers (off where one request fans
+ *                out across many images and the blob is not worth the write)
+ *   client       browser-collected details from the blocked page's beacon; these
+ *                arrive after the attempt itself, so they merge into the row it
+ *                created rather than counting as another attempt
+ * Returns the id of the row the attempt landed on.
  */
-function logBlocked(req, imageId, assessment, linkLabel = null) {
+function logBlocked(req, imageId, assessment, linkLabel = null, { withHeaders = true, client = null } = {}) {
   const ua = req.headers['user-agent'] || '';
   const device = parseUserAgent(ua);
   const geoBlob = {
@@ -121,14 +140,48 @@ function logBlocked(req, imageId, assessment, linkLabel = null) {
     geo_json: JSON.stringify(geoBlob),
     user_agent: ua || null,
     device_json: JSON.stringify(device),
-    headers_json: JSON.stringify(captureHeaders(req)),
+    headers_json: withHeaders ? JSON.stringify(captureHeaders(req)) : null,
+    client_json: client ? JSON.stringify(client) : null,
     link_label: linkLabel || null,
     blocked_reason: assessment.reason || 'blocked',
   };
 
-  if (touchBlocked.run({ ...row, since: row.viewed_at - BLOCKED_DEDUPE_MS }).changes === 0) {
-    insertBlocked.run(row);
+  const existing = findRecentBlocked.get({
+    image_id: row.image_id,
+    blocked_reason: row.blocked_reason,
+    ip: row.ip,
+    since: row.viewed_at - BLOCKED_DEDUPE_MS,
+  });
+  if (existing) {
+    touchBlocked.run({ ...row, id: existing.id, attempt_delta: client ? 0 : 1 });
+    return existing.id;
   }
+  return insertBlocked.get(row).id;
+}
+
+const imagesOverBlockedCap = db.prepare(
+  `SELECT image_id, COUNT(*) AS n FROM access_logs
+   WHERE blocked_reason IS NOT NULL GROUP BY image_id HAVING n > ?`
+);
+const pruneBlockedForImage = db.prepare(`
+DELETE FROM access_logs
+WHERE blocked_reason IS NOT NULL AND image_id = @image_id AND id NOT IN (
+  SELECT id FROM access_logs
+  WHERE blocked_reason IS NOT NULL AND image_id = @image_id
+  ORDER BY viewed_at DESC, id DESC LIMIT @keep
+)
+`);
+
+/**
+ * Drop all but the newest BLOCKED_LOG_KEEP refused attempts per image. Served
+ * views are never touched. Returns the number of rows removed.
+ */
+function pruneBlockedLogs(keep = BLOCKED_LOG_KEEP) {
+  let removed = 0;
+  for (const row of imagesOverBlockedCap.all(keep)) {
+    removed += pruneBlockedForImage.run({ image_id: row.image_id, keep }).changes;
+  }
+  return removed;
 }
 
 /** Record the client-side telemetry beacon for a given view. */
@@ -148,4 +201,4 @@ function logClient(imageId, viewId, clientData) {
   });
 }
 
-module.exports = { logRender, logBlocked, logClient, captureHeaders };
+module.exports = { logRender, logBlocked, logClient, pruneBlockedLogs, captureHeaders, BLOCKED_LOG_KEEP };
