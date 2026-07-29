@@ -242,6 +242,11 @@ function migrateIntegerUserIds() {
   }
 
   db.pragma('foreign_keys = OFF');
+  // Renaming a table would otherwise rewrite references to it in the foreign
+  // keys of tables not in `affected` (access_logs, gallery_items, view_links),
+  // leaving them pointing at temp tables this function drops.
+  const legacyAlter = db.pragma('legacy_alter_table', { simple: true });
+  db.pragma('legacy_alter_table = ON');
   db.exec('CREATE TEMP TABLE __user_uuid_map (old_id INTEGER PRIMARY KEY, new_id TEXT NOT NULL UNIQUE)');
   const oldUsers = db.prepare('SELECT id FROM users').all();
   const mapUser = db.prepare('INSERT INTO __user_uuid_map (old_id, new_id) VALUES (?, ?)');
@@ -281,6 +286,7 @@ function migrateIntegerUserIds() {
 
   for (const index of indexes) db.exec(index.sql);
   db.exec('DROP TABLE __user_uuid_map');
+  db.pragma(`legacy_alter_table = ${legacyAlter ? 'ON' : 'OFF'}`);
   db.pragma('foreign_keys = ON');
 }
 
@@ -354,14 +360,31 @@ function detachImagesFromOwner() {
       'owner_id TEXT REFERENCES users(id) ON DELETE SET NULL');
 
   db.pragma('foreign_keys = OFF');
-  db.transaction(() => {
-    db.exec('ALTER TABLE images RENAME TO __images_cascade_old');
-    db.exec(createSql);
-    db.exec(`INSERT INTO images (${cols}) SELECT ${cols} FROM __images_cascade_old`);
-    db.exec('DROP TABLE __images_cascade_old');
-    for (const index of indexes) db.exec(index.sql);
-  })();
-  db.pragma('foreign_keys = ON');
+  // Modern SQLite rewrites references to a renamed table inside every OTHER
+  // table's foreign keys. Without this, access_logs, leak_reports and
+  // gallery_items would be left pointing at the temp table we are about to
+  // drop, and every later write to them would fail with "no such table".
+  const legacyAlter = db.pragma('legacy_alter_table', { simple: true });
+  db.pragma('legacy_alter_table = ON');
+  try {
+    db.transaction(() => {
+      db.exec('ALTER TABLE images RENAME TO __images_cascade_old');
+      db.exec(createSql);
+      db.exec(`INSERT INTO images (${cols}) SELECT ${cols} FROM __images_cascade_old`);
+      db.exec('DROP TABLE __images_cascade_old');
+      for (const index of indexes) db.exec(index.sql);
+    })();
+  } finally {
+    db.pragma(`legacy_alter_table = ${legacyAlter ? 'ON' : 'OFF'}`);
+    db.pragma('foreign_keys = ON');
+  }
+
+  // A rebuild that silently broke a reference is worse than no rebuild, so
+  // refuse to start rather than serve a database whose keys no longer resolve.
+  const broken = db.pragma('foreign_key_check');
+  if (broken.length) {
+    throw new Error(`images rebuild left ${broken.length} broken foreign key reference(s)`);
+  }
 }
 detachImagesFromOwner();
 
