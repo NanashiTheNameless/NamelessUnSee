@@ -123,6 +123,10 @@
     <div class="card" style="max-width:680px">
       <h2 style="margin-top:0">Delete account</h2>
       <p class="muted">This permanently deletes your account and all stored files. This action cannot be undone.</p>
+      <p class="muted">Your account and your stored files are erased immediately, and nothing you
+        shared can be viewed again. The access logs of your uploads are kept for
+        <%= logRetentionHours %> more hours, readable only by the operator, exactly as they
+        are when an image is deleted on its own- then they are erased too.</p>
 
       <% if (deleteChallenge) { %>
         <form method="post" action="/account/security/delete/confirm" style="max-width:420px">

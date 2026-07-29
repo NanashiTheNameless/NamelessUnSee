@@ -17,6 +17,9 @@ const listUserProofFiles = db.prepare(
    LEFT JOIN images i ON i.id = r.image_id
    WHERE r.reporter_id = ? OR i.owner_id = ?`
 );
+const markImagesDeleted = db.prepare(
+  'UPDATE images SET deleted_at = ? WHERE owner_id = ? AND deleted_at IS NULL'
+);
 
 // Rows that reference users without ON DELETE CASCADE must be nulled before the
 // user row can be removed (foreign_keys is ON).
@@ -29,15 +32,22 @@ const deleteUserTx = db.transaction((id) => {
   db.prepare('DELETE FROM users WHERE id = ?').run(id);
 });
 
-// Permanently delete an account: stored files, report proofs, then the user row
-// (sessions, images, challenges and their reports cascade). Throws if a stored
-// image cannot be removed; proof-file cleanup is best-effort.
+/**
+ * Permanently delete an account. Stored files- uploads and report proofs- are
+ * erased immediately, and the user row goes with everything that cascades from
+ * it (sessions, challenges, reports). The image records themselves are marked
+ * deleted and left behind, orphaned, so their access logs age out on the normal
+ * retention schedule instead of vanishing with the account; the retention sweep
+ * collects both once the window closes.
+ * Throws if a stored image cannot be removed; proof cleanup is best-effort.
+ */
 async function deleteUserAccount(user) {
   for (const image of listUserImages.all(user.id)) await storage.remove(image);
   for (const { storage_name } of listUserProofFiles.all(user.id, user.id, user.id, user.id)) {
     if (!storage_name) continue;
     try { fs.rmSync(beneath(config.reportDir, storage_name), { force: true }); } catch {}
   }
+  markImagesDeleted.run(Date.now(), user.id);
   deleteUserTx(user.id);
 }
 

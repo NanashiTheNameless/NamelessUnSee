@@ -633,6 +633,7 @@ function renderAccount(res, user, extra = {}) {
     notice: extra.notice || null,
     recovery: extra.recovery || null,
     deleteChallenge: extra.deleteChallenge || null,
+    logRetentionHours: config.logRetentionAfterDeleteHours,
   });
 }
 

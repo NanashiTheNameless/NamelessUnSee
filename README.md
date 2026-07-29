@@ -45,7 +45,13 @@ successor to the defunct [unsee.cc](https://unsee.cc).
   by hand- its access log is kept for a further 48 hours
   (`LOG_RETENTION_AFTER_DELETE_HOURS`), still readable by the uploader from a
   "Recently deleted" section on the dashboard, and by admins. After that window a
-  maintenance pass erases it for good.
+  maintenance pass erases it for good. **Deleting an account** works the same way:
+  the account and its stored files go immediately, but the access logs of its
+  uploads survive the window, detached from the deleted account, before the sweep
+  collects them along with the last trace of the upload.
+- **The site owner can erase a log early.** Owner rank only, from the admin log
+  view, wiping every entry for one image ahead of the retention window. The action
+  is audited, and is refused while an open leak report still cites an entry.
 - **The warning, ToS and Privacy pages perform no application collection.** They
   perform no application logging or geolocation and use only their own text,
   the site font, a self-hosted proof-of-work bot check where applicable, and a

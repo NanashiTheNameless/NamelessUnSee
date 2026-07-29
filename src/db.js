@@ -75,7 +75,10 @@ CREATE TABLE IF NOT EXISTS recovery_challenges (
 CREATE TABLE IF NOT EXISTS images (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   token           TEXT NOT NULL UNIQUE,  -- public slug in the share URL
-  owner_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  -- Nullable, and detached rather than cascaded, so that deleting an account
+  -- does not take the access logs of its uploads with it: the rows are orphaned
+  -- and swept once the log-retention window closes.
+  owner_id        TEXT REFERENCES users(id) ON DELETE SET NULL,
   storage_name    TEXT NOT NULL,         -- filename on disk (originals, never served)
   mime            TEXT NOT NULL,
   width           INTEGER,
@@ -332,6 +335,35 @@ addColumn('images', 'moderation_details', 'moderation_details TEXT');
 addColumn('access_logs', 'link_label', 'link_label TEXT');
 addColumn('access_logs', 'blocked_reason', 'blocked_reason TEXT');
 addColumn('access_logs', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 1');
+
+// Older databases cascade images away with their owner, which would also take
+// the access logs of those images. Rebuild the table so an image survives its
+// owner as an orphan until the log-retention sweep collects it. SQLite cannot
+// alter a foreign key in place, so the table has to be rewritten.
+function detachImagesFromOwner() {
+  const schema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'images'").get();
+  if (!schema || !/owner_id[^,]*ON DELETE CASCADE/i.test(schema.sql)) return;
+
+  const cols = db.prepare('PRAGMA table_info(images)').all().map((c) => `"${c.name}"`).join(', ');
+  const indexes = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = 'images'")
+    .all();
+  const createSql = schema.sql
+    .replace(/^CREATE TABLE(?: IF NOT EXISTS)?\s+\S+/i, 'CREATE TABLE images')
+    .replace(/owner_id(\s+TEXT)?\s+NOT NULL\s+REFERENCES users\(id\)\s+ON DELETE CASCADE/i,
+      'owner_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+
+  db.pragma('foreign_keys = OFF');
+  db.transaction(() => {
+    db.exec('ALTER TABLE images RENAME TO __images_cascade_old');
+    db.exec(createSql);
+    db.exec(`INSERT INTO images (${cols}) SELECT ${cols} FROM __images_cascade_old`);
+    db.exec('DROP TABLE __images_cascade_old');
+    for (const index of indexes) db.exec(index.sql);
+  })();
+  db.pragma('foreign_keys = ON');
+}
+detachImagesFromOwner();
 
 // Gallery tables were added after initial release. Older DB files won't have
 // them, but SQLite can't IF NOT EXISTS on ALTER TABLE for missing tables.

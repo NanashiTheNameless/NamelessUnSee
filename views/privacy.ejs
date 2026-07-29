@@ -171,6 +171,15 @@
     operator. Account data is retained for the life of the account. The operator
     may retain limited records longer where necessary for security or to comply
     with legal obligations.</p>
+  <p><strong>Deleting an account</strong> erases the account and its stored files
+    immediately- uploads and any screenshot evidence- and nothing that account
+    shared can be viewed again. The access logs of its uploads are kept for the
+    same <%= logRetentionHours %> hours that follow any image deletion, detached from
+    the deleted account and readable only by administrators, and are then erased
+    along with the last record of the upload.</p>
+  <p>The site owner may erase an image's access log ahead of that window. That is
+    a deliberate, audited action, and it is refused while an open leak report still
+    relies on the entries.</p>
 
   <h2>9. International transfers</h2>
   <p>Data is processed on the operator's infrastructure<% if (operator.jurisdiction) { %>

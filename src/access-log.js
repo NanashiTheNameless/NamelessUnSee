@@ -90,6 +90,42 @@ const detachReports = db.prepare(
 );
 const deleteLogsForImage = db.prepare('DELETE FROM access_logs WHERE image_id = ?');
 
+const openReportsCiting = db.prepare(
+  `SELECT COUNT(*) AS n FROM leak_reports
+   WHERE status = 'open' AND access_log_id IN (SELECT id FROM access_logs WHERE image_id = ?)`
+);
+
+/** How many open leak reports still cite an entry of this image's log. */
+function openReportCount(imageId) {
+  return openReportsCiting.get(imageId).n;
+}
+
+/**
+ * Erase an image's whole access log ahead of the retention window. Refuses
+ * while an open leak report cites one of the entries- that evidence trail has
+ * to be resolved first. Resolved reports survive with their reference cleared.
+ * Returns { erased } or { blocked: <open report count> }.
+ */
+function eraseForImage(imageId) {
+  const open = openReportCount(imageId);
+  if (open) return { blocked: open };
+  let erased = 0;
+  db.transaction(() => {
+    detachReports.run(imageId);
+    erased = deleteLogsForImage.run(imageId).changes;
+  })();
+  return { erased };
+}
+
+// An image whose owner deleted their account is left behind on purpose, so its
+// log can age out normally. Once that log is gone the record has no reader and
+// no owner, so it goes too.
+const dropOrphanedImages = db.prepare(
+  `DELETE FROM images
+   WHERE owner_id IS NULL AND deleted_at IS NOT NULL AND deleted_at <= ?
+     AND NOT EXISTS (SELECT 1 FROM access_logs a WHERE a.image_id = images.id)`
+);
+
 /** Delete the logs of images deleted longer ago than the retention window. */
 function purgeExpired(now = Date.now()) {
   const cutoff = retentionCutoff(now);
@@ -99,7 +135,18 @@ function purgeExpired(now = Date.now()) {
     removed += deleteLogsForImage.run(imageId).changes;
   });
   for (const row of expiredLogImages.all(cutoff)) tx(row.id);
+  dropOrphanedImages.run(cutoff);
   return removed;
 }
 
-module.exports = { readPage, purgeExpired, retainedUntil, retentionCutoff, retentionMs, safeParse, PAGE_SIZE };
+module.exports = {
+  readPage,
+  purgeExpired,
+  eraseForImage,
+  openReportCount,
+  retainedUntil,
+  retentionCutoff,
+  retentionMs,
+  safeParse,
+  PAGE_SIZE,
+};

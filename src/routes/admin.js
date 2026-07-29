@@ -41,7 +41,7 @@ const listReports = db.prepare(
           reporter.username AS reporter_name
    FROM leak_reports r
    JOIN images i ON i.id = r.image_id
-   JOIN users owner ON owner.id = i.owner_id
+   LEFT JOIN users owner ON owner.id = i.owner_id
    JOIN users reporter ON reporter.id = r.reporter_id
    ORDER BY CASE r.status WHEN 'open' THEN 0 ELSE 1 END, r.created_at DESC`
 );
@@ -137,6 +137,7 @@ router.get('/admin/images/:token/logs', requireAdmin, (req, res) => {
   const owner = getUser.get(image.owner_id) || null;
 
   const q = (req.query.q || '').toString().trim().slice(0, 100);
+  const blocked = Math.max(0, parseInt(req.query.blocked, 10) || 0);
   audit.record(
     req.user,
     'admin_view_access_log',
@@ -155,8 +156,36 @@ router.get('/admin/images/:token/logs', requireAdmin, (req, res) => {
     baseUrl: config.baseUrl,
     q,
     reported: false,
+    // Erasing a log ahead of its retention window is an owner-rank action.
+    canErase: req.user.rank === 'owner',
+    erasePath: `/admin/images/${encodeURIComponent(image.token)}/logs/erase`,
+    openReports: accessLog.openReportCount(image.id),
+    notice: req.query.erased === '1' ? 'Access log erased.' : null,
+    error: blocked
+      ? `This log cannot be erased yet: ${blocked} open leak report(s) still cite it. Resolve those reports first.`
+      : null,
     ...accessLog.readPage(image.id, { q, page: req.query.page }),
   });
+});
+
+// Force-erase an image's access log before the retention window expires. Owner
+// rank only, and refused while an open leak report still cites an entry.
+router.post('/admin/images/:token/logs/erase', requireOwner, verifyCsrf, (req, res) => {
+  const image = getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
+  if (!image) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
+  const logsPath = `/admin/images/${encodeURIComponent(image.token)}/logs`;
+
+  const result = accessLog.eraseForImage(image.id);
+  if (result.blocked) return res.redirect(`${logsPath}?blocked=${result.blocked}`);
+
+  const owner = getUser.get(image.owner_id);
+  audit.record(
+    req.user,
+    'owner_erase_access_log',
+    `${result.erased} entr${result.erased === 1 ? 'y' : 'ies'} for ${image.token} owned by ${owner ? owner.username : 'unknown'}`,
+    image.owner_id
+  );
+  res.redirect(`${logsPath}?erased=1`);
 });
 
 router.get('/admin/users/:id/files/:token', limiters.admin, requireAdmin, async (req, res) => {

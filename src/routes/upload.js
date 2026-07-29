@@ -394,6 +394,12 @@ router.get('/dashboard/i/:token/logs', requireAuth, (req, res) => {
     baseUrl: config.baseUrl,
     q,
     reported: req.query.reported === '1',
+    // Erasing a log early is an owner-rank action, taken from the admin view.
+    canErase: false,
+    erasePath: null,
+    openReports: 0,
+    notice: null,
+    error: null,
     ...accessLog.readPage(img.id, { q, page: req.query.page }),
   });
 });

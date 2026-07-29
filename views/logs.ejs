@@ -48,6 +48,8 @@
   <p><a href="<%= backHref %>">← <%= backLabel %></a></p>
   <h1>Access log</h1>
   <% if (reported) { %><div class="notice">Leaker report submitted to administrators.</div><% } %>
+  <% if (notice) { %><div class="notice"><%= notice %></div><% } %>
+  <% if (error) { %><div class="error"><%= error %></div><% } %>
   <p class="muted mono"><%= image.title || '(untitled)' %> - <%= baseUrl %>/i/<%= image.token %></p>
   <% if (admin) { %>
     <p class="muted">Owner: <span class="mono"><%= owner ? owner.username : 'unknown' %></span>. This view is recorded in the audit log.</p>
@@ -65,6 +67,23 @@
 
   <p class="muted"><%= total %> match<%= total === 1 ? '' : 'es' %><% if (q) { %> for "<%= q %>"<% } %> -
     page <%= page %> of <%= totalPages %></p>
+
+  <% if (canErase && total) { %>
+    <div class="card" style="max-width:640px; margin:0 auto 1rem">
+      <h3 style="margin-top:0">Erase this log</h3>
+      <% if (openReports) { %>
+        <p class="muted">Erasing is blocked: <%= openReports %> open leak report<%= openReports === 1 ? '' : 's' %>
+          still cite<%= openReports === 1 ? 's' : '' %> an entry here. Resolve the report<%= openReports === 1 ? '' : 's' %> first.</p>
+      <% } else { %>
+        <p class="muted">Deletes every entry for this image immediately, ahead of the normal
+          retention window. This cannot be undone, and the action is recorded in the audit log.</p>
+        <form method="post" action="<%= erasePath %>" onsubmit="return confirm('Permanently erase all <%= total %> access-log entries for this image? This cannot be undone.');">
+          <input type="hidden" name="_csrf" value="<%= csrf %>">
+          <button class="btn danger small" type="submit">Erase Access Log</button>
+        </form>
+      <% } %>
+    </div>
+  <% } %>
 
   <% if (!logs.length) { %>
     <p class="muted"><%= q ? 'No matching views.' : 'No views recorded yet.' %></p>
