@@ -37,6 +37,12 @@ CREATE TABLE access_logs (
   image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
   view_id TEXT, viewed_at INTEGER NOT NULL, ip TEXT
 );
+CREATE TABLE view_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  image_id INTEGER NOT NULL REFERENCES images(id) ON DELETE CASCADE,
+  token TEXT NOT NULL UNIQUE, label TEXT, max_uses INTEGER,
+  use_count INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, revoked_at INTEGER
+);
 CREATE INDEX idx_images_owner ON images(owner_id);
 `);
   const now = Date.now();
@@ -57,11 +63,15 @@ const PROBE = `
   const db = require(${JSON.stringify(path.join(ROOT, 'src', 'db.js'))});
   const imagesSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'images'").get().sql;
   const logsSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'access_logs'").get().sql;
+  const linksSql = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'view_links'").get().sql;
+  db.prepare("INSERT INTO view_links (image_id, token, created_at) VALUES (1, 'linktoken', ?)").run(Date.now());
   db.prepare("INSERT INTO access_logs (image_id, view_id, viewed_at, ip) VALUES (1, 'v2', ?, '198.51.100.6')").run(Date.now());
   db.prepare("DELETE FROM users WHERE id = 'u-legacy'").run();
   process.stdout.write(JSON.stringify({
     imagesSql,
     logsSql,
+    linksSql,
+    links: db.prepare('SELECT COUNT(*) AS n FROM view_links').get().n,
     brokenKeys: db.pragma('foreign_key_check').length,
     images: db.prepare('SELECT COUNT(*) AS n FROM images').get().n,
     orphanOwner: db.prepare("SELECT owner_id FROM images WHERE token = 'legacytoken'").get().owner_id,
@@ -119,8 +129,10 @@ test('a database left with a dangling reference by the earlier rebuild is repair
 
   assert.match(result.logsSql, /REFERENCES\s+"?images"?\(id\)/i, 'the reference was pointed back at images');
   assert.doesNotMatch(result.logsSql, /__images_cascade_old/, 'no trace of the temp table is left');
+  assert.match(result.linksSql, /REFERENCES\s+"?images"?\(id\)/i, 'every affected table is repaired, not just the first');
   assert.equal(result.brokenKeys, 0, 'the database is consistent again');
   assert.equal(result.logs, 2, 'existing log rows survived and writes work again');
+  assert.equal(result.links, 1, 'writes to the other repaired table work too');
   assert.equal(result.images, 1, 'image rows survived');
 });
 
