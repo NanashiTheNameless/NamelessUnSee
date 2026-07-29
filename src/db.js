@@ -342,6 +342,67 @@ addColumn('access_logs', 'link_label', 'link_label TEXT');
 addColumn('access_logs', 'blocked_reason', 'blocked_reason TEXT');
 addColumn('access_logs', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 1');
 
+// Repair databases that went through an earlier table rebuild which renamed a
+// table without PRAGMA legacy_alter_table. SQLite rewrote the references to it
+// inside other tables' foreign keys, and those temp tables no longer exist, so
+// every write to the affected tables fails with "no such table". The data is
+// untouched- only the stored schema text is wrong- so each affected table is
+// rebuilt with the reference pointed back at the real parent.
+const TEMP_PARENTS = [
+  [/__images_cascade_old/i, 'images'],
+  [/__uuid_old_([a-z_]+)/i, null], // parent name is the captured suffix
+];
+
+function realParentFor(tempName) {
+  for (const [pattern, target] of TEMP_PARENTS) {
+    const match = pattern.exec(tempName);
+    if (match) return target || match[1];
+  }
+  return null;
+}
+
+function repairDetachedForeignKeys() {
+  const suspects = db
+    .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND sql IS NOT NULL")
+    .all()
+    .filter((t) => !t.name.startsWith('__') && /REFERENCES\s+"?__\w+"?/i.test(t.sql));
+  if (!suspects.length) return 0;
+
+  db.pragma('foreign_keys = OFF');
+  const legacyAlter = db.pragma('legacy_alter_table', { simple: true });
+  db.pragma('legacy_alter_table = ON');
+  let repaired = 0;
+  try {
+    for (const table of suspects) {
+      const fixedSql = table.sql.replace(/REFERENCES\s+"?(__\w+)"?/gi, (whole, tempName) => {
+        const parent = realParentFor(tempName);
+        return parent ? `REFERENCES "${parent}"` : whole;
+      });
+      if (fixedSql === table.sql) continue;
+
+      const cols = db.prepare(`PRAGMA table_info("${table.name}")`).all().map((c) => `"${c.name}"`).join(', ');
+      const indexes = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL AND tbl_name = ?")
+        .all(table.name);
+      const staging = `__repair_${table.name}`;
+      db.transaction(() => {
+        db.exec(`ALTER TABLE "${table.name}" RENAME TO "${staging}"`);
+        db.exec(fixedSql);
+        db.exec(`INSERT INTO "${table.name}" (${cols}) SELECT ${cols} FROM "${staging}"`);
+        db.exec(`DROP TABLE "${staging}"`);
+        for (const index of indexes) db.exec(index.sql);
+      })();
+      repaired += 1;
+      console.warn(`[NamelessUnSee] repaired dangling foreign key in ${table.name}`);
+    }
+  } finally {
+    db.pragma(`legacy_alter_table = ${legacyAlter ? 'ON' : 'OFF'}`);
+    db.pragma('foreign_keys = ON');
+  }
+  return repaired;
+}
+repairDetachedForeignKeys();
+
 // Older databases cascade images away with their owner, which would also take
 // the access logs of those images. Rebuild the table so an image survives its
 // owner as an orphan until the log-retention sweep collects it. SQLite cannot

@@ -70,6 +70,60 @@ const PROBE = `
   }));
 `;
 
+// Exactly what a database looks like after the earlier, broken rebuild shipped:
+// the rename rewrote access_logs' foreign key to the temp table, which was then
+// dropped. Reads still work; every write dies with "no such table".
+function corruptLegacyDb(dir) {
+  const db = new Database(path.join(dir, 'namelessunsee.sqlite'));
+  // The rebuild as it originally shipped: no legacy_alter_table, so the rename
+  // silently rewrites access_logs' foreign key to the table we then drop.
+  const schema = db.prepare("SELECT sql FROM sqlite_master WHERE name = 'images'").get().sql;
+  const cols = db.prepare('PRAGMA table_info(images)').all().map((c) => `"${c.name}"`).join(', ');
+  const createSql = schema.replace(
+    /owner_id(\s+TEXT)?\s+NOT NULL\s+REFERENCES users\(id\)\s+ON DELETE CASCADE/i,
+    'owner_id TEXT REFERENCES users(id) ON DELETE SET NULL'
+  );
+  db.pragma('foreign_keys = OFF');
+  db.exec('ALTER TABLE images RENAME TO __images_cascade_old');
+  db.exec(createSql);
+  db.exec(`INSERT INTO images (${cols}) SELECT ${cols} FROM __images_cascade_old`);
+  db.exec('DROP TABLE __images_cascade_old');
+  db.close();
+}
+
+test('a database left with a dangling reference by the earlier rebuild is repaired on boot', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-repair-'));
+  seedLegacyDb(dir);
+  corruptLegacyDb(dir);
+
+  // Confirm the fixture really is broken the way production was.
+  const before = new Database(path.join(dir, 'namelessunsee.sqlite'));
+  assert.match(
+    before.prepare("SELECT sql FROM sqlite_master WHERE name = 'access_logs'").get().sql,
+    /__images_cascade_old/,
+    'fixture reproduces the corruption'
+  );
+  assert.throws(
+    () => before.prepare("INSERT INTO access_logs (image_id, view_id, viewed_at, ip) VALUES (1,'x',1,'1.1.1.1')").run(),
+    /no such table: main\.__images_cascade_old/,
+    'fixture fails exactly as production did'
+  );
+  before.close();
+
+  const out = execFileSync(process.execPath, ['-e', PROBE], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, DATA_DIR: dir, COOKIE_SECRET: 'test-' + 'x'.repeat(40), RESEND_API_KEY: '' },
+  });
+  const result = JSON.parse(out);
+
+  assert.match(result.logsSql, /REFERENCES\s+"?images"?\(id\)/i, 'the reference was pointed back at images');
+  assert.doesNotMatch(result.logsSql, /__images_cascade_old/, 'no trace of the temp table is left');
+  assert.equal(result.brokenKeys, 0, 'the database is consistent again');
+  assert.equal(result.logs, 2, 'existing log rows survived and writes work again');
+  assert.equal(result.images, 1, 'image rows survived');
+});
+
 test('a legacy database is rebuilt without breaking the keys that point at images', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nus-migrate-'));
   seedLegacyDb(dir);
