@@ -243,7 +243,7 @@ must use its batch API.
 To copy the persistent local SQLite database into D1 from the app container,
 configure the D1 variables above and run:
 
-```powershell
+```bash
 docker compose exec app corepack yarn migrate-d1
 ```
 
