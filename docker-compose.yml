@@ -26,7 +26,9 @@ services:
       NSFW_SERVICE_URL: http://moderation:8787
     depends_on:
       moderation:
-        condition: service_healthy
+        # The moderation worker downloads and warms several ML models. The
+        # web app can start while that happens.
+        condition: service_started
     volumes:
       # Persists SQLite, reports, and downloaded IP-intelligence databases.
       # Encrypted media is added here only when STORAGE_BACKEND=local; R2 media

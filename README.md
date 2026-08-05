@@ -209,6 +209,10 @@ docker compose exec app corepack yarn set-owner you@example.invalid
    sidecar image from GHCR. Set `GHCR_IMAGE` or `MODERATION_IMAGE` to use
    another tag or digest. For a local source build, use
    `docker compose -f docker-compose.dev.yml up -d --build`.
+   The development file publishes the app at `http://localhost:3000` (set
+   `APP_PORT` if that port is already in use). The moderation worker may take
+   several minutes to download and warm its models; the web app starts before
+   that finishes.
 
 The app is never exposed to the host directly- all inbound traffic arrives
 through the Cloudflare Tunnel. SQLite is embedded in the app container; the
