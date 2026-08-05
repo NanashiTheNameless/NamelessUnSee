@@ -359,7 +359,7 @@ matching primary keys in D1; back up or test the target database first.
 
 ## Attribution & licensing
 
-unsee is licensed under the **Nameless Nanashi Code License (NNCL) v1.4**- see
+unsee is licensed under the **Nameless Nanashi Code License (NNCL) v1.5**- see
 [`LICENSE.md`](./LICENSE.md) for the full text. In summary it permits
 non-commercial use, study, sharing and adaptation under firm ethical conditions,
 and requires that adaptations carry the same license and policy forward.
