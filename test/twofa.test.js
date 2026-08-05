@@ -347,10 +347,10 @@ test('signup decisions carry an admin message; deny+ban blocks and notifies', as
   assert.match(lastEmail.text, /Automated signup flood\./);
   assert.ok(!lastEmail.text.includes('botnet pattern'), 'internal note never reaches the applicant');
   assert.ok(!lastEmail.html.includes('botnet pattern'), 'internal note never reaches the applicant');
-  assert.ok(bans.emailBan('pendspam@example.test').account, 'email is account-banned');
-  assert.ok(bans.userBan(banMe).account, 'user id is account-banned');
+  assert.ok((await bans.emailBan('pendspam@example.test')).account, 'email is account-banned');
+  assert.ok((await bans.userBan(banMe)).account, 'user id is account-banned');
   // The ban reason an admin sees is the internal note, not the emailed message.
-  const banRow = bans.list().find((b) => b.kind === 'email' && b.value === 'pendspam@example.test');
+  const banRow = (await bans.list()).find((b) => b.kind === 'email' && b.value === 'pendspam@example.test');
   assert.equal(banRow.reason, 'Matches the botnet pattern from last week; do not reinstate.');
   // Both texts are stored as their own columns, on the audit row and the account.
   const logged = db.prepare("SELECT note, internal_note, target_id FROM audit_log WHERE action = 'reject_ban_user' ORDER BY id DESC LIMIT 1").get();
@@ -448,13 +448,13 @@ test('rejection points the applicant at the operator contact; owner can override
 
   // The owner reinstates from the user list, and the ban from a deny+ban is lifted.
   const bans = require('../src/bans');
-  bans.add({ kind: 'email', value: 'appeal@example.test', block_account: 1, block_view: 0, created_by: ownerId, expires_at: null });
+  await bans.add({ kind: 'email', value: 'appeal@example.test', block_account: 1, block_view: 0, created_by: ownerId, expires_at: null });
   const ownerReq = await login('boss2');
   const ocsrf = csrfFrom(await (await ownerReq('/admin/users')).text());
   lastEmail = null;
   assert.equal((await ownerReq(`/admin/users/${targetId}/override`, form({ _csrf: ocsrf, decision: 'approved', note: 'Vouched for by a moderator.' }))).status, 302);
   assert.equal(db.prepare('SELECT status FROM users WHERE id = ?').get(targetId).status, 'approved');
-  assert.ok(!bans.emailBan('appeal@example.test').account, 'override clears the email ban');
+  assert.ok(!(await bans.emailBan('appeal@example.test')).account, 'override clears the email ban');
   assert.match(lastEmail.text, /Vouched for by a moderator\./);
 
   // ...and can reverse an approval too, returning to the audit log it came from.

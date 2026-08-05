@@ -64,6 +64,14 @@ const config = {
   tempDir: TEMP_DIR,
   maxReportBytes: int(process.env.MAX_REPORT_MB, 10) * 1024 * 1024,
   dbPath: path.join(DATA_DIR, 'namelessunsee.sqlite'),
+  database: {
+    backend: String(process.env.DB_BACKEND || 'sqlite').trim().toLowerCase(),
+    d1: {
+      accountId: process.env.CLOUDFLARE_ACCOUNT_ID || '',
+      databaseId: process.env.CLOUDFLARE_D1_DATABASE_ID || '',
+      apiToken: process.env.CLOUDFLARE_API_TOKEN || '',
+    },
+  },
   sourceUrl: (process.env.SOURCE_URL || 'https://github.com/NanashiTheNameless/NamelessUnSee').replace(/\/+$/, ''),
   imageTtlHours: int(process.env.IMAGE_TTL_HOURS, 24),
   // How long an image's access log outlives the image itself. The forensic

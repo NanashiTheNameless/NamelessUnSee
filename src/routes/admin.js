@@ -3,7 +3,7 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { requireAdmin, requireOwner, verifyCsrf } = require('../auth');
 const bans = require('../bans');
@@ -18,25 +18,30 @@ const { deleteUserAccount } = require('../user-deletion');
 const router = express.Router();
 router.use(limiters.admin);
 
-const pendingUsers = db.prepare("SELECT * FROM users WHERE status = 'pending' ORDER BY created_at ASC");
-const allUsers = db.prepare('SELECT * FROM users ORDER BY created_at DESC');
-const getUser = db.prepare('SELECT * FROM users WHERE id = ?');
-const setStatus = db.prepare('UPDATE users SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?');
-const setRole = db.prepare('UPDATE users SET role = ? WHERE id = ?');
-const setRank = db.prepare("UPDATE users SET rank = ? WHERE id = ? AND rank != 'owner'");
-const setDecisionNotes = db.prepare('UPDATE users SET decision_note = ?, decision_internal_note = ? WHERE id = ?');
-const setUserLimits = db.prepare('UPDATE users SET upload_max_bytes = ?, storage_limit_bytes = ? WHERE id = ?');
-const listUserImages = db.prepare('SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
-const listUserDeletedImages = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const pendingUsers = statement("SELECT * FROM users WHERE status = 'pending' ORDER BY created_at ASC");
+const allUsers = statement('SELECT * FROM users ORDER BY created_at DESC');
+const getUser = statement('SELECT * FROM users WHERE id = ?');
+const setStatus = statement('UPDATE users SET status = ?, approved_at = ?, approved_by = ? WHERE id = ?');
+const setRole = statement('UPDATE users SET role = ? WHERE id = ?');
+const setRank = statement("UPDATE users SET rank = ? WHERE id = ? AND rank != 'owner'");
+const setDecisionNotes = statement('UPDATE users SET decision_note = ?, decision_internal_note = ? WHERE id = ?');
+const setUserLimits = statement('UPDATE users SET upload_max_bytes = ?, storage_limit_bytes = ? WHERE id = ?');
+const listUserImages = statement('SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC');
+const listUserDeletedImages = statement(
   `SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
    ORDER BY deleted_at DESC`
 );
-const getImageForLogs = db.prepare(
+const getImageForLogs = statement(
   'SELECT * FROM images WHERE token = ? AND (deleted_at IS NULL OR deleted_at > ?)'
 );
-const getUserImage = db.prepare('SELECT * FROM images WHERE owner_id = ? AND token = ? AND deleted_at IS NULL');
-const softDeleteUserImage = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL');
-const listReports = db.prepare(
+const getUserImage = statement('SELECT * FROM images WHERE owner_id = ? AND token = ? AND deleted_at IS NULL');
+const softDeleteUserImage = statement('UPDATE images SET deleted_at = ? WHERE id = ? AND owner_id = ? AND deleted_at IS NULL');
+const listReports = statement(
   `SELECT r.*, i.token, i.title AS image_title, i.owner_id, owner.username AS owner_name,
           reporter.username AS reporter_name
    FROM leak_reports r
@@ -45,14 +50,14 @@ const listReports = db.prepare(
    JOIN users reporter ON reporter.id = r.reporter_id
    ORDER BY CASE r.status WHEN 'open' THEN 0 ELSE 1 END, r.created_at DESC`
 );
-const getReport = db.prepare('SELECT * FROM leak_reports WHERE id = ?');
-const listReportProofs = db.prepare('SELECT id, storage_name, mime, byte_size FROM leak_report_proofs WHERE report_id = ? ORDER BY id');
-const updateReport = db.prepare(
+const getReport = statement('SELECT * FROM leak_reports WHERE id = ?');
+const listReportProofs = statement('SELECT id, storage_name, mime, byte_size FROM leak_report_proofs WHERE report_id = ? ORDER BY id');
+const updateReport = statement(
   'UPDATE leak_reports SET status = ?, reviewed_at = ?, reviewed_by = ?, admin_note = ? WHERE id = ?'
 );
-const countAccounts = db.prepare('SELECT COUNT(*) AS n FROM users');
-const countPendingAccounts = db.prepare("SELECT COUNT(*) AS n FROM users WHERE status = 'pending'");
-const countOpenReports = db.prepare("SELECT COUNT(*) AS n FROM leak_reports WHERE status = 'open'");
+const countAccounts = statement('SELECT COUNT(*) AS n FROM users');
+const countPendingAccounts = statement("SELECT COUNT(*) AS n FROM users WHERE status = 'pending'");
+const countOpenReports = statement("SELECT COUNT(*) AS n FROM leak_reports WHERE status = 'open'");
 
 // Optional expiry presets for bans.
 const BAN_TTL = { never: null, '1h': 3600, '24h': 86400, '7d': 7 * 86400, '30d': 30 * 86400 };
@@ -63,78 +68,81 @@ function banExpiry(key) {
 
 const AUDIT_PAGE = 50;
 
-function reportRows() {
-  return listReports.all().map((report) => ({
+async function reportRows() {
+  const reports = await listReports.all();
+  return Promise.all(reports.map(async (report) => ({
     ...report,
-    proofs: listReportProofs.all(report.id).length
-      ? listReportProofs.all(report.id)
+    proofs: (await listReportProofs.all(report.id)).length
+      ? await listReportProofs.all(report.id)
       : [{ id: null, storage_name: report.proof_storage_name, mime: report.proof_mime, byte_size: report.proof_byte_size }],
-  }));
+  })));
 }
 
-function sectionData(req, section) {
-  const users = allUsers.all().map((u) => ({ ...u, ban: bans.userBan(u.id) }));
+async function sectionData(req, section) {
+  const users = await Promise.all((await allUsers.all()).map(async (u) => ({ ...u, ban: await bans.userBan(u.id) })));
   const apage = Math.max(1, parseInt(req.query.apage, 10) || 1);
-  const auditTotal = audit.count();
+  const auditTotal = await audit.count();
+  const banRows = await bans.list();
   return {
     section,
-    pending: pendingUsers.all(),
+    pending: await pendingUsers.all(),
     users,
-    bans: bans.list(),
+    bans: banRows,
     me: req.user,
-    audit: audit.list(AUDIT_PAGE, (apage - 1) * AUDIT_PAGE),
+    audit: await audit.list(AUDIT_PAGE, (apage - 1) * AUDIT_PAGE),
     apage,
     auditTotalPages: Math.max(1, Math.ceil(auditTotal / AUDIT_PAGE)),
-    reports: reportRows(),
+    reports: await reportRows(),
     config,
   };
 }
 
-router.get('/admin', requireAdmin, (req, res) => {
+router.get('/admin', requireAdmin, async (req, res) => {
+  const banRows = await bans.list();
   res.render('admin-home', {
-    accountCount: countAccounts.get().n,
-    pendingCount: countPendingAccounts.get().n,
-    openReportCount: countOpenReports.get().n,
-    banCount: bans.list().length,
-    auditCount: audit.count(),
+    accountCount: (await countAccounts.get()).n,
+    pendingCount: (await countPendingAccounts.get()).n,
+    openReportCount: (await countOpenReports.get()).n,
+    banCount: banRows.length,
+    auditCount: await audit.count(),
     reviewCount: res.locals.reviewPending || 0,
-    recentBans: bans.list().slice(0, 5),
-    recentAudit: audit.list(5, 0),
+    recentBans: banRows.slice(0, 5),
+    recentAudit: await audit.list(5, 0),
   });
 });
 
 for (const [pathName, section] of [['users', 'users'], ['reports', 'reports'], ['bans', 'bans'], ['audit', 'audit']]) {
-  router.get(`/admin/${pathName}`, requireAdmin, (req, res) => res.render('admin', sectionData(req, section)));
+  router.get(`/admin/${pathName}`, requireAdmin, async (req, res) => res.render('admin', await sectionData(req, section)));
 }
 
-router.post('/admin/audit/clear', requireOwner, verifyCsrf, (req, res) => {
-  audit.clear();
+router.post('/admin/audit/clear', requireOwner, verifyCsrf, async (req, res) => {
+  await audit.clear();
   res.redirect('/admin/audit');
 });
 
-router.post('/admin/audit/:id/delete', requireOwner, verifyCsrf, (req, res) => {
+router.post('/admin/audit/:id/delete', requireOwner, verifyCsrf, async (req, res) => {
   const id = Number.parseInt(req.params.id, 10);
-  if (Number.isInteger(id) && id > 0) audit.remove(id);
+  if (Number.isInteger(id) && id > 0) await audit.remove(id);
   res.redirect('/admin/audit');
 });
 
-router.get('/admin/users/:id/files', requireAdmin, (req, res) => {
-  const user = getUser.get(req.params.id);
+router.get('/admin/users/:id/files', requireAdmin, async (req, res) => {
+  const user = await getUser.get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not found', message: 'No such user.' });
   res.render('admin-user-files', {
     target: user,
-    images: listUserImages.all(user.id),
-    recentlyDeleted: listUserDeletedImages.all(user.id, accessLog.retentionCutoff()),
+    images: await listUserImages.all(user.id),
+    recentlyDeleted: await listUserDeletedImages.all(user.id, accessLog.retentionCutoff()),
     logRetentionHours: config.logRetentionAfterDeleteHours,
   });
 });
 
 // Admins can read any image's access log, including one whose media is already
 // gone- the log outlives it by the retention window.
-router.get('/admin/images/:token/logs', requireAdmin, (req, res) => {
-  const image = getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
+router.get('/admin/images/:token/logs', requireAdmin, async (req, res) => {
+  const image = await getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
   if (!image) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
-  const owner = getUser.get(image.owner_id) || null;
+  const owner = await getUser.get(image.owner_id) || null;
 
   const q = (req.query.q || '').toString().trim().slice(0, 100);
   const blocked = Math.max(0, parseInt(req.query.blocked, 10) || 0);
@@ -159,27 +167,27 @@ router.get('/admin/images/:token/logs', requireAdmin, (req, res) => {
     // Erasing a log ahead of its retention window is an owner-rank action.
     canErase: req.user.rank === 'owner',
     erasePath: `/admin/images/${encodeURIComponent(image.token)}/logs/erase`,
-    openReports: accessLog.openReportCount(image.id),
+    openReports: await accessLog.openReportCount(image.id),
     notice: req.query.erased === '1' ? 'Access log erased.' : null,
     error: blocked
       ? `This log cannot be erased yet: ${blocked} open leak report(s) still cite it. Resolve those reports first.`
       : null,
-    ...accessLog.readPage(image.id, { q, page: req.query.page }),
+    ...(await accessLog.readPage(image.id, { q, page: req.query.page })),
   });
 });
 
 // Force-erase an image's access log before the retention window expires. Owner
 // rank only, and refused while an open leak report still cites an entry.
-router.post('/admin/images/:token/logs/erase', requireOwner, verifyCsrf, (req, res) => {
-  const image = getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
+router.post('/admin/images/:token/logs/erase', requireOwner, verifyCsrf, async (req, res) => {
+  const image = await getImageForLogs.get(req.params.token, accessLog.retentionCutoff());
   if (!image) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
   const logsPath = `/admin/images/${encodeURIComponent(image.token)}/logs`;
 
-  const result = accessLog.eraseForImage(image.id);
+  const result = await accessLog.eraseForImage(image.id);
   if (result.blocked) return res.redirect(`${logsPath}?blocked=${result.blocked}`);
 
-  const owner = getUser.get(image.owner_id);
-  audit.record(
+  const owner = await getUser.get(image.owner_id);
+  await audit.record(
     req.user,
     'owner_erase_access_log',
     `${result.erased} entr${result.erased === 1 ? 'y' : 'ies'} for ${image.token} owned by ${owner ? owner.username : 'unknown'}`,
@@ -189,7 +197,7 @@ router.post('/admin/images/:token/logs/erase', requireOwner, verifyCsrf, (req, r
 });
 
 router.get('/admin/users/:id/files/:token', limiters.admin, requireAdmin, async (req, res) => {
-  const image = db.prepare(
+  const image = await statement(
     'SELECT i.* FROM images i WHERE i.owner_id = ? AND i.token = ? AND i.deleted_at IS NULL'
   ).get(req.params.id, req.params.token);
   if (!image) return res.status(404).end();
@@ -197,13 +205,13 @@ router.get('/admin/users/:id/files/:token', limiters.admin, requireAdmin, async 
 });
 
 router.post('/admin/users/:id/files/:token/delete', requireAdmin, verifyCsrf, async (req, res) => {
-  const user = getUser.get(req.params.id);
-  const image = getUserImage.get(req.params.id, req.params.token);
+  const user = await getUser.get(req.params.id);
+  const image = await getUserImage.get(req.params.id, req.params.token);
   if (user && image) {
     try {
       await storage.remove(image);
-      softDeleteUserImage.run(Date.now(), image.id, user.id);
-      audit.record(req.user, 'admin_delete_file', `${image.token} owned by ${user.username} (#${user.id})`);
+      await softDeleteUserImage.run(Date.now(), image.id, user.id);
+      await audit.record(req.user, 'admin_delete_file', `${image.token} owned by ${user.username} (#${user.id})`);
     } catch {
       return res.status(500).render('error', { title: 'Delete error', message: 'The file could not be deleted.' });
     }
@@ -212,23 +220,23 @@ router.post('/admin/users/:id/files/:token/delete', requireAdmin, verifyCsrf, as
 });
 
 router.post('/admin/users/:id/files/delete-all', requireAdmin, verifyCsrf, async (req, res) => {
-  const user = getUser.get(req.params.id);
+  const user = await getUser.get(req.params.id);
   if (!user) return res.status(404).render('error', { title: 'Not found', message: 'No such user.' });
-  const images = listUserImages.all(user.id);
+  const images = await listUserImages.all(user.id);
   try {
     for (const image of images) {
       await storage.remove(image);
-      softDeleteUserImage.run(Date.now(), image.id, user.id);
+      await softDeleteUserImage.run(Date.now(), image.id, user.id);
     }
-    if (images.length) audit.record(req.user, 'admin_delete_all_files', `${images.length} files owned by ${user.username} (#${user.id})`);
+    if (images.length) await audit.record(req.user, 'admin_delete_all_files', `${images.length} files owned by ${user.username} (#${user.id})`);
   } catch {
     return res.status(500).render('error', { title: 'Delete error', message: 'One or more files could not be deleted.' });
   }
   res.redirect(`/admin/users/${encodeURIComponent(req.params.id)}/files`);
 });
 
-router.get('/admin/reports/:id/proof', limiters.admin, requireAdmin, (req, res) => {
-  const report = getReport.get(req.params.id);
+router.get('/admin/reports/:id/proof', limiters.admin, requireAdmin, async (req, res) => {
+  const report = await getReport.get(req.params.id);
   if (!report) return res.status(404).end();
   let proofPath;
   try { proofPath = beneath(config.reportDir, report.proof_storage_name); } catch { return res.status(404).end(); }
@@ -239,8 +247,8 @@ router.get('/admin/reports/:id/proof', limiters.admin, requireAdmin, (req, res) 
   fs.createReadStream(proofPath).pipe(res);
 });
 
-router.get('/admin/reports/:id/proof/:proofId', limiters.admin, requireAdmin, (req, res) => {
-  const proof = db.prepare(
+router.get('/admin/reports/:id/proof/:proofId', limiters.admin, requireAdmin, async (req, res) => {
+  const proof = await statement(
     'SELECT storage_name, mime FROM leak_report_proofs WHERE id = ? AND report_id = ?'
   ).get(req.params.proofId, req.params.id);
   if (!proof) return res.status(404).end();
@@ -253,12 +261,12 @@ router.get('/admin/reports/:id/proof/:proofId', limiters.admin, requireAdmin, (r
   fs.createReadStream(proofPath).pipe(res);
 });
 
-router.post('/admin/reports/:id/status', requireAdmin, verifyCsrf, (req, res) => {
-  const report = getReport.get(req.params.id);
+router.post('/admin/reports/:id/status', requireAdmin, verifyCsrf, async (req, res) => {
+  const report = await getReport.get(req.params.id);
   const status = ['open', 'reviewed', 'dismissed'].includes(req.body.status) ? req.body.status : null;
   if (report && status) {
-    updateReport.run(status, Date.now(), req.user.id, (req.body.admin_note || '').slice(0, 1000) || null, report.id);
-    audit.record(req.user, 'report_' + status, `report #${report.id} image ${report.image_id}`);
+    await updateReport.run(status, Date.now(), req.user.id, (req.body.admin_note || '').slice(0, 1000) || null, report.id);
+    await audit.record(req.user, 'report_' + status, `report #${report.id} image ${report.image_id}`);
   }
   res.redirect('/admin/reports');
 });
@@ -283,42 +291,42 @@ function subject(u) {
 // Both texts are kept on the account as the current decision, and on the audit
 // row as the decision at that moment, so neither is lost when the next one
 // overwrites it.
-function recordDecision(req, u, action, extra = '') {
+async function recordDecision(req, u, action, extra = '') {
   const note = decisionNote(req);
   const internal = internalNote(req);
-  setDecisionNotes.run(note || null, internal || null, u.id);
-  audit.record(req.user, action, subject(u) + extra, u.id, { note, internalNote: internal });
+  await setDecisionNotes.run(note || null, internal || null, u.id);
+  await audit.record(req.user, action, subject(u) + extra, u.id, { note, internalNote: internal });
   return { note, internal };
 }
 
-router.post('/admin/users/:id/approve', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/approve', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u && u.status === 'pending') {
-    setStatus.run('approved', Date.now(), req.user.id, u.id);
-    const { note } = recordDecision(req, u, 'approve_user');
+    await setStatus.run('approved', Date.now(), req.user.id, u.id);
+    const { note } = await recordDecision(req, u, 'approve_user');
     notify.sendSignupStatus(u, 'approved', note).catch(() => {});
   }
   res.redirect('/admin/users');
 });
 
-router.post('/admin/users/:id/reject', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/reject', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u && u.id !== req.user.id && u.rank !== 'owner') {
-    setStatus.run('rejected', null, req.user.id, u.id);
-    const { note } = recordDecision(req, u, 'reject_user');
+    await setStatus.run('rejected', null, req.user.id, u.id);
+    const { note } = await recordDecision(req, u, 'reject_user');
     notify.sendSignupStatus(u, 'rejected', note).catch(() => {});
   }
   res.redirect('/admin/users');
 });
 
 // Deny and ban the address in one step, for applications that are plainly spam.
-router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u && u.id !== req.user.id && u.rank !== 'owner') {
     // The ban reason is the internal note, never the message the applicant gets.
     const banReason = internalNote(req) || `rejected signup ${u.username}`;
-    setStatus.run('rejected', null, req.user.id, u.id);
-    bans.add({
+    await setStatus.run('rejected', null, req.user.id, u.id);
+    await bans.add({
       kind: 'email',
       value: String(u.email || '').trim().toLowerCase(),
       block_account: 1,
@@ -327,7 +335,7 @@ router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, (req, res) 
       created_by: req.user.id,
       expires_at: null,
     });
-    bans.add({
+    await bans.add({
       kind: 'user',
       value: u.id,
       block_account: 1,
@@ -336,7 +344,7 @@ router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, (req, res) 
       created_by: req.user.id,
       expires_at: null,
     });
-    const { note } = recordDecision(req, u, 'reject_ban_user', ' + email ban');
+    const { note } = await recordDecision(req, u, 'reject_ban_user', ' + email ban');
     notify.sendSignupStatus(u, 'banned', note).catch(() => {});
   }
   res.redirect('/admin/users');
@@ -346,8 +354,8 @@ router.post('/admin/users/:id/reject-ban', requireAdmin, verifyCsrf, (req, res) 
 // Overriding an approval or a deny-and-ban also clears the bans that decision
 // created, otherwise a reinstated account still could not log in.
 const OVERRIDE_DECISIONS = new Set(['approved', 'rejected']);
-router.post('/admin/users/:id/override', requireOwner, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/override', requireOwner, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   const decision = OVERRIDE_DECISIONS.has(req.body.decision) ? req.body.decision : null;
   if (!u || !decision) {
     return res.status(404).render('error', { title: 'Not found', message: 'No such user or decision.' });
@@ -355,12 +363,12 @@ router.post('/admin/users/:id/override', requireOwner, verifyCsrf, (req, res) =>
   const back = req.body.back === 'audit' ? '/admin/audit' : '/admin/users';
   if (u.status === decision) return res.redirect(back);
 
-  setStatus.run(decision, decision === 'approved' ? Date.now() : null, req.user.id, u.id);
+  await setStatus.run(decision, decision === 'approved' ? Date.now() : null, req.user.id, u.id);
   if (decision === 'approved') {
-    bans.removeMatching('user', u.id);
-    bans.removeMatching('email', String(u.email || '').trim().toLowerCase());
+    await bans.removeMatching('user', u.id);
+    await bans.removeMatching('email', String(u.email || '').trim().toLowerCase());
   }
-  const { note } = recordDecision(
+  const { note } = await recordDecision(
     req, u,
     decision === 'approved' ? 'override_approve_user' : 'override_reject_user'
   );
@@ -368,37 +376,37 @@ router.post('/admin/users/:id/override', requireOwner, verifyCsrf, (req, res) =>
   res.redirect(back);
 });
 
-router.post('/admin/users/:id/rank', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/rank', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   const rank = ['user', 'trusted'].includes(req.body.rank) ? req.body.rank : null;
   if (u && rank) {
-    setRank.run(rank, u.id);
-    audit.record(req.user, 'set_user_rank', `${u.username} (#${u.id}) -> ${rank}`);
+    await setRank.run(rank, u.id);
+    await audit.record(req.user, 'set_user_rank', `${u.username} (#${u.id}) -> ${rank}`);
   }
   res.redirect('/admin/users');
 });
 
-router.post('/admin/users/:id/promote', requireOwner, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/promote', requireOwner, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u && u.status === 'approved') {
-    setRole.run('admin', u.id);
-    audit.record(req.user, 'promote_admin', `${u.username} (#${u.id})`);
+    await setRole.run('admin', u.id);
+    await audit.record(req.user, 'promote_admin', `${u.username} (#${u.id})`);
   }
   res.redirect('/admin/users');
 });
 
-router.post('/admin/users/:id/demote', requireOwner, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/demote', requireOwner, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   // Never let an admin demote themselves (avoid locking out the last admin).
   if (u && u.id !== req.user.id) {
-    setRole.run('user', u.id);
-    audit.record(req.user, 'demote_admin', `${u.username} (#${u.id})`);
+    await setRole.run('user', u.id);
+    await audit.record(req.user, 'demote_admin', `${u.username} (#${u.id})`);
   }
   res.redirect('/admin/users');
 });
 
-router.post('/admin/users/:id/limits', requireAdmin, verifyCsrf, (req, res) => {
-  const user = getUser.get(req.params.id);
+router.post('/admin/users/:id/limits', requireAdmin, verifyCsrf, async (req, res) => {
+  const user = await getUser.get(req.params.id);
   if (user) {
     const parseMb = (value, max) => {
       if (value === undefined || value === '') return null;
@@ -410,44 +418,44 @@ router.post('/admin/users/:id/limits', requireAdmin, verifyCsrf, (req, res) => {
     const uploadInvalid = req.body.upload_max_mb !== '' && uploadMb === null;
     const storageInvalid = req.body.storage_limit_mb !== '' && storageMb === null;
     if (!uploadInvalid && !storageInvalid) {
-      setUserLimits.run(uploadMb, storageMb, user.id);
-      audit.record(req.user, 'set_user_limits', `${user.username} (#${user.id}) upload=${uploadMb ? uploadMb / 1048576 + 'MB' : 'default'} storage=${storageMb ? storageMb / 1048576 + 'MB' : 'default'}`);
+      await setUserLimits.run(uploadMb, storageMb, user.id);
+      await audit.record(req.user, 'set_user_limits', `${user.username} (#${user.id}) upload=${uploadMb ? uploadMb / 1048576 + 'MB' : 'default'} storage=${storageMb ? storageMb / 1048576 + 'MB' : 'default'}`);
     }
   }
   res.redirect('/admin/users');
 });
 
 // Quick account ban/unban for a user (optionally also ban their last IP / email).
-router.post('/admin/users/:id/ban', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/ban', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u && u.id !== req.user.id) {
     const expires_at = banExpiry(req.body.expires);
-    bans.add({ kind: 'user', value: u.id, block_account: 1, block_view: 1, reason: req.body.reason || 'admin ban', created_by: req.user.id, expires_at });
+    await bans.add({ kind: 'user', value: u.id, block_account: 1, block_view: 1, reason: req.body.reason || 'admin ban', created_by: req.user.id, expires_at });
     const extras = [];
     if (req.body.ban_ip && u.last_ip) {
-      bans.add({ kind: 'ip', value: u.last_ip, block_account: 1, block_view: 1, reason: `user ${u.username} last IP`, created_by: req.user.id, expires_at });
+      await bans.add({ kind: 'ip', value: u.last_ip, block_account: 1, block_view: 1, reason: `user ${u.username} last IP`, created_by: req.user.id, expires_at });
       extras.push('ip ' + u.last_ip);
     }
     if (req.body.ban_email) {
-      bans.add({ kind: 'email', value: u.email, block_account: 1, block_view: 0, reason: `user ${u.username} email`, created_by: req.user.id, expires_at });
+      await bans.add({ kind: 'email', value: u.email, block_account: 1, block_view: 0, reason: `user ${u.username} email`, created_by: req.user.id, expires_at });
       extras.push('email');
     }
-    audit.record(req.user, 'ban_user', `${u.username} (#${u.id})${extras.length ? ' + ' + extras.join(', ') : ''}${expires_at ? ' until ' + new Date(expires_at).toISOString() : ''}`);
+    await audit.record(req.user, 'ban_user', `${u.username} (#${u.id})${extras.length ? ' + ' + extras.join(', ') : ''}${expires_at ? ' until ' + new Date(expires_at).toISOString() : ''}`);
   }
   res.redirect('/admin/users');
 });
 
-router.post('/admin/users/:id/unban', requireAdmin, verifyCsrf, (req, res) => {
-  const u = getUser.get(req.params.id);
+router.post('/admin/users/:id/unban', requireAdmin, verifyCsrf, async (req, res) => {
+  const u = await getUser.get(req.params.id);
   if (u) {
-    bans.removeMatching('user', u.id);
-    audit.record(req.user, 'unban_user', `${u.username} (#${u.id})`);
+    await bans.removeMatching('user', u.id);
+    await audit.record(req.user, 'unban_user', `${u.username} (#${u.id})`);
   }
   res.redirect('/admin/users');
 });
 
 router.post('/admin/users/:id/delete', requireAdmin, verifyCsrf, async (req, res) => {
-  const u = getUser.get(req.params.id);
+  const u = await getUser.get(req.params.id);
   if (!u) return res.status(404).render('error', { title: 'Not found', message: 'No such user.' });
   // Admins may delete non-admin accounts; only the owner may delete admins.
   const allowed = u.id !== req.user.id && u.rank !== 'owner'
@@ -460,19 +468,19 @@ router.post('/admin/users/:id/delete', requireAdmin, verifyCsrf, async (req, res
   } catch {
     return res.status(500).render('error', { title: 'Delete error', message: 'One or more files could not be deleted.' });
   }
-  audit.record(req.user, 'delete_user', `${u.username} <${u.email}> (#${u.id})`);
+  await audit.record(req.user, 'delete_user', `${u.username} <${u.email}> (#${u.id})`);
   res.redirect('/admin/users');
 });
 
 // General ban management.
-router.post('/admin/bans', requireAdmin, verifyCsrf, (req, res) => {
+router.post('/admin/bans', requireAdmin, verifyCsrf, async (req, res) => {
   const kind = req.body.kind;
   const value = (req.body.value || '').trim();
   const blockAccount = req.body.block_account ? 1 : 0;
   const blockView = req.body.block_view ? 1 : 0;
   if (['ip', 'email', 'user'].includes(kind) && value && (blockAccount || blockView)) {
     const expires_at = banExpiry(req.body.expires);
-    bans.add({
+    await bans.add({
       kind,
       value: kind === 'email' ? value.toLowerCase() : value,
       block_account: blockAccount,
@@ -481,14 +489,14 @@ router.post('/admin/bans', requireAdmin, verifyCsrf, (req, res) => {
       created_by: req.user.id,
       expires_at,
     });
-    audit.record(req.user, 'add_ban', `${kind} ${value}${blockView ? ' [view]' : ''}${blockAccount ? ' [account]' : ''}${expires_at ? ' until ' + new Date(expires_at).toISOString() : ''}`);
+    await audit.record(req.user, 'add_ban', `${kind} ${value}${blockView ? ' [view]' : ''}${blockAccount ? ' [account]' : ''}${expires_at ? ' until ' + new Date(expires_at).toISOString() : ''}`);
   }
   res.redirect('/admin/bans');
 });
 
-router.post('/admin/bans/:id/delete', requireAdmin, verifyCsrf, (req, res) => {
-  bans.remove(req.params.id);
-  audit.record(req.user, 'remove_ban', `#${req.params.id}`);
+router.post('/admin/bans/:id/delete', requireAdmin, verifyCsrf, async (req, res) => {
+  await bans.remove(req.params.id);
+  await audit.record(req.user, 'remove_ban', `#${req.params.id}`);
   res.redirect('/admin/bans');
 });
 

@@ -116,5 +116,5 @@ test('blocklist: admin adds a hash, matching upload is auto-quarantined; blockli
   const rq = await (await admin.req('/admin/review')).text();
   const csrf = csrfFrom(rq);
   assert.equal((await admin.req('/admin/review/' + token + '/blocklist-ban', form({ _csrf: csrf }))).status, 302);
-  assert.ok(bans.userBan(row.owner_id).account, 'owner is account-banned');
+  assert.ok((await bans.userBan(row.owner_id)).account, 'owner is account-banned');
 });

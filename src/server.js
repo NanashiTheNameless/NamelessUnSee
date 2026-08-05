@@ -6,14 +6,17 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 
 const config = require('./config');
-const db = require('./db');
+const { getDatabase } = require('./db-runtime');
 const bans = require('./bans');
 const { attachUser, sweepSessions } = require('./auth');
 
-const countReviewPending = db.prepare(
-  "SELECT COUNT(*) AS n FROM images WHERE deleted_at IS NULL AND moderation_status IN ('review', 'quarantined')"
-);
-const countLeakReports = db.prepare("SELECT COUNT(*) AS n FROM leak_reports WHERE status = 'open'");
+const query = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const countReviewPending = query("SELECT COUNT(*) AS n FROM images WHERE deleted_at IS NULL AND moderation_status IN ('review', 'quarantined')");
+const countLeakReports = query("SELECT COUNT(*) AS n FROM leak_reports WHERE status = 'open'");
 const { baseSecurity, enforceViewBan } = require('./middleware');
 const storage = require('./storage');
 const logging = require('./logging');
@@ -78,14 +81,14 @@ app.use(attachUser);
 app.use(enforceViewBan);
 
 // Expose helpers to all templates.
-app.use((req, res, next) => {
+app.use(async (req, res, next) => {
   res.locals.user = req.user;
   res.locals.csrf = req.session ? req.session.csrf_token : '';
   res.locals.baseUrl = config.baseUrl;
   res.locals.sourceUrl = config.sourceUrl;
   res.locals.altcha = config.altcha;
-  res.locals.reviewPending = req.user && req.user.role === 'admin' ? countReviewPending.get().n : 0;
-  res.locals.reportPending = req.user && req.user.role === 'admin' ? countLeakReports.get().n : 0;
+  res.locals.reviewPending = req.user && req.user.role === 'admin' ? (await countReviewPending.get()).n : 0;
+  res.locals.reportPending = req.user && req.user.role === 'admin' ? (await countLeakReports.get()).n : 0;
   next();
 });
 
@@ -121,26 +124,24 @@ app.use((err, req, res, next) => {
 });
 
 // --- Background maintenance -----------------------------------------------
-const purgeExpiredImages = db.prepare(
-  'SELECT * FROM images WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?'
-);
-const markPurged = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?');
+const purgeExpiredImages = query('SELECT * FROM images WHERE deleted_at IS NULL AND expires_at IS NOT NULL AND expires_at < ?');
+const markPurged = query('UPDATE images SET deleted_at = ? WHERE id = ?');
 
-function runMaintenance() {
+async function runMaintenance() {
   try {
     const now = Date.now();
-    const expired = purgeExpiredImages.all(now);
+    const expired = await purgeExpiredImages.all(now);
     for (const img of expired) {
       storage.remove(img).catch(() => {});
-      markPurged.run(now, img.id);
+      await markPurged.run(now, img.id);
     }
     if (expired.length) console.log(`[NamelessUnSee] purged ${expired.length} expired image(s)`);
-    const prunedBlocked = logging.pruneBlockedLogs();
+    const prunedBlocked = await logging.pruneBlockedLogs();
     if (prunedBlocked) console.log(`[NamelessUnSee] pruned ${prunedBlocked} old blocked-attempt log row(s)`);
-    const expiredLogs = accessLog.purgeExpired(now);
+    const expiredLogs = await accessLog.purgeExpired(now);
     if (expiredLogs) console.log(`[NamelessUnSee] erased ${expiredLogs} access-log row(s) past the retention window`);
-    sweepSessions();
-    bans.sweepExpired();
+    await sweepSessions();
+    await bans.sweepExpired();
   } catch (e) {
     console.error('[NamelessUnSee] maintenance error:', e.message);
   }
@@ -149,8 +150,8 @@ function runMaintenance() {
 // Start background work and listen. Called only when run directly (not when the
 // app is imported by the test suite).
 function start() {
-  setInterval(runMaintenance, 10 * 60 * 1000).unref();
-  runMaintenance();
+  setInterval(() => runMaintenance().catch((error) => console.error('[NamelessUnSee] maintenance error:', error.message)), 10 * 60 * 1000).unref();
+  runMaintenance().catch((error) => console.error('[NamelessUnSee] maintenance error:', error.message));
 
   // Load and auto-update the local IP-intelligence datasets (MaxMind GeoLite2,
   // Tor exit list, VPN/datacenter ranges). All per-viewer detection is local.

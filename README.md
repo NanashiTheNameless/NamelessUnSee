@@ -138,7 +138,7 @@ share link  ─►  /welcome (agree + ALTCHA)  ─►  consent cookie (session)
 
 - **Node.js + Express** (server-rendered EJS- the legal pages are trivially
   auditable to prove they load nothing extra).
-- **better-sqlite3** for storage, **sharp** for watermark compositing, and
+- **SQLite** for storage, **sharp** for watermark compositing, and
   **ffmpeg/ffprobe** (system binaries) for probing and watermarking video
   uploads.
 - **[0xProto](https://github.com/0xType/0xProto)** as the font everywhere-
@@ -215,11 +215,41 @@ docker compose exec app corepack yarn set-owner you@example.invalid
    that finishes.
 
 The app is never exposed to the host directly- all inbound traffic arrives
-through the Cloudflare Tunnel. SQLite is embedded in the app container; the
-database (`namelessunsee.sqlite`), reports, and downloaded datasets persist in
-the `unsee-data` volume mounted at `/app/data`. Encrypted media is stored there
-only with `STORAGE_BACKEND=local`; R2 deployments stage media in ephemeral
-container storage and upload it directly to R2.
+through the Cloudflare Tunnel. SQLite is embedded in the app container when
+`DB_BACKEND=sqlite`; the database (`namelessunsee.sqlite`), reports, and
+downloaded datasets persist in the `unsee-data` volume mounted at `/app/data`.
+With `DB_BACKEND=d1`, application SQL is sent to D1's REST API instead. Encrypted
+media is stored there only with `STORAGE_BACKEND=local`; R2 deployments stage
+media in ephemeral container storage and upload it directly to R2.
+
+Database backends
+
+SQLite remains the default local backend. Both the application and maintenance
+jobs use the async database runtime. The remote D1 configuration is:
+
+```dotenv
+DB_BACKEND=d1
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_D1_DATABASE_ID=your-d1-database-id
+CLOUDFLARE_API_TOKEN=your-token-with-d1-read-and-write
+```
+
+The D1 token is sent only from the server to Cloudflare's API and must never be
+exposed to browser code. D1 REST mode is intended for deployments outside the
+Workers runtime; local development continues to use the SQLite file. D1 REST
+does not provide an interactive transaction handle; multi-statement writes
+must use its batch API.
+
+To copy the persistent local SQLite database into D1 from the app container,
+configure the D1 variables above and run:
+
+```powershell
+docker compose exec app corepack yarn migrate-d1
+```
+
+The command creates the target schema, then copies tables in foreign-key order
+while preserving IDs. It uses `INSERT OR REPLACE`, so rerunning it overwrites
+matching primary keys in D1; back up or test the target database first.
 
 ## Configuration
 
@@ -233,6 +263,9 @@ container storage and upload it directly to R2.
 | `SECURE_COOKIES` | `false` | `true` in production (behind HTTPS/Cloudflare) |
 | `SOURCE_URL` | this repo | Source-code link shown in the footer and on info pages |
 | `DATA_DIR` | `./data` | Where the SQLite DB and uploaded originals live |
+| `DB_BACKEND` | `sqlite` | Async database backend: `sqlite` for local development or `d1` for Cloudflare D1 REST |
+| `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_D1_DATABASE_ID` | | Cloudflare account and D1 database IDs when `DB_BACKEND=d1` |
+| `CLOUDFLARE_API_TOKEN` | | Server-only Cloudflare API token with D1 read/write permissions |
 | `IMAGE_TTL_HOURS` | `24` | Retention before an upload is auto-purged (`0` = never) |
 | `LOG_RETENTION_AFTER_DELETE_HOURS` | `48` | How long an image's access log survives the image's deletion. During the window the uploader and admins can still read it; afterwards a maintenance pass erases the rows. `0` erases them on the next pass after deletion |
 | `MAX_UPLOAD_MB` | `500` | Default max upload size per file |
@@ -242,10 +275,10 @@ container storage and upload it directly to R2.
 | `DISPOSABLE_EMAIL_DOMAINS` | built-in list | Comma-separated disposable/alias email domains to reject at registration. Matches the domain and any subdomain of it, and is merged with the downloaded blocklist below |
 | `DISPOSABLE_LIST_ENABLED` / `DISPOSABLE_REFRESH_HOURS` | `true` / `24` | Download the [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) community blocklist (~8k domains) and refresh it on this interval. Cached under `DATA_DIR/intel`; matching is entirely local |
 | `DISPOSABLE_LIST_URL` | upstream raw URL | Override the blocklist source (one bare domain per line; `#` comments allowed) |
-| `EMAIL_DOMAIN_ALLOWLIST_ENABLED` | `false` | Allowlist mode. When `true`, **only** domains in `EMAIL_DOMAIN_ALLOWLIST` may register and every other domain is refused regardless of the blocklists — including corporate, university and self-hosted domains |
+| `EMAIL_DOMAIN_ALLOWLIST_ENABLED` | `false` | Allowlist mode. When `true`, **only** domains in `EMAIL_DOMAIN_ALLOWLIST` may register and every other domain is refused regardless of the blocklists - including corporate, university and self-hosted domains |
 | `EMAIL_DOMAIN_ALLOWLIST` | mainstream providers | Comma-separated allowlist, matching a domain and its subdomains. Ships with Gmail, Outlook, iCloud, Yahoo, Proton, Tuta, Fastmail, GMX, Zoho, Yandex, QQ, Naver and the large ISP mailboxes; setting this replaces the built-in list. Has no effect until the switch above is `true` |
 | `NEW_ACCOUNT_TRUST_DELAY_HOURS` | `24` | Minimum account age before a manually trusted account receives trusted privileges |
-| `RL_SIGNUP_BURST_MAX` | `15` | Signups from one network within 15 minutes before registration is throttled. Counts volume only — the mail domain is never a bucket, so a shared address is not penalised for the mix of providers behind it |
+| `RL_SIGNUP_BURST_MAX` | `15` | Signups from one network within 15 minutes before registration is throttled. Counts volume only - the mail domain is never a bucket, so a shared address is not penalised for the mix of providers behind it |
 | `RL_SIGNUP_EMAIL_WINDOW_MIN` / `RL_SIGNUP_EMAIL_MAX` | `1440` / `3` | Registration quota counted per email address only; per-IP signup pressure is handled by `RL_SIGNUP_MAX`, so shared networks are not capped as a group |
 | User ranks | `User`, `Trusted User`, `Owner` | Trusted users get 2x default limits and skip NSFW scanning; owners have no upload/storage limits and always have admin access |
 | `STORAGE_BACKEND` | `local` | Encrypted media backend: `local`, or `s3`/`r2` for any S3-compatible store |
@@ -269,7 +302,7 @@ container storage and upload it directly to R2.
 | `TWOFA_CONSOLE_FALLBACK` | `false` | Development-only console OTP fallback; keep disabled in production |
 | `TWOFA_CHALLENGE_MIN` | `5` | Email/TOTP challenge lifetime in minutes |
 | `RL_REPORT_WINDOW_MIN` / `RL_REPORT_MAX` | `1440` / `10` | Leak-report rate limit per account |
-| `RATELIMIT_EXEMPT_STAFF` | `true` | Admins and owners bypass every limiter. Login and signup are unaffected — those requests are unauthenticated, so there is no staff account to exempt |
+| `RATELIMIT_EXEMPT_STAFF` | `true` | Admins and owners bypass every limiter. Login and signup are unaffected - those requests are unauthenticated, so there is no staff account to exempt |
 | `RL_PUBLIC_MAX` / `RL_ADMIN_MAX` / `RL_AUTH_MAX` / `RL_ALTCHA_MAX` | `1200` / `900` / `600` / `600` | Per-IP, per-minute ceilings for the public, admin, account and challenge routers |
 | `RATELIMIT_STORE` / `REDIS_URL` | `memory` | Set `redis` + a URL to share rate-limit counters across instances (`yarn add redis`) |
 | `MODERATION_ENABLED` | `true` | Upload-time scanning (perceptual-hash blocklist + optional classifier) |

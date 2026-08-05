@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { requireAuth, verifyCsrf } = require('../auth');
 const { requireConsent, widgetPage } = require('../middleware');
@@ -27,26 +27,30 @@ const proofUpload = multer({
   fileFilter: (req, file, cb) => cb(null, /^image\/(png|jpeg|webp|gif|avif)$/.test(file.mimetype)),
 });
 
-const getImage = db.prepare('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
-const getRecipientLink = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const getImage = statement('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
+const getRecipientLink = statement(
   `SELECT vl.token AS recipient_token, i.token AS image_token
    FROM view_links vl JOIN images i ON i.id = vl.image_id
    WHERE vl.token = ? AND vl.revoked_at IS NULL`
 );
-const insertReport = db.prepare(
+const insertReport = statement(
   `INSERT INTO leak_reports
      (image_id, reporter_id, view_ref, reason, details, proof_storage_name, proof_mime, proof_byte_size, created_at, access_log_id)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 );
-const getOwnerLog = db.prepare(
+const getOwnerLog = statement(
   `SELECT a.*, i.token, i.title
    FROM access_logs a JOIN images i ON i.id = a.image_id
    WHERE a.id = ? AND i.token = ? AND i.owner_id = ?
      AND (i.deleted_at IS NULL OR i.deleted_at > ?)
      AND a.blocked_reason IS NULL`
 );
-const existingLogReport = db.prepare('SELECT id FROM leak_reports WHERE access_log_id = ?');
-const insertProof = db.prepare(
+const existingLogReport = statement('SELECT id FROM leak_reports WHERE access_log_id = ?');
+const insertProof = statement(
   'INSERT INTO leak_report_proofs (report_id, storage_name, mime, byte_size, created_at) VALUES (?, ?, ?, ?, ?)'
 );
 
@@ -67,8 +71,8 @@ async function validateProofs(files) {
   }
 }
 
-router.use('/r/:token', (req, res, next) => {
-  const link = getRecipientLink.get(req.params.token);
+router.use('/r/:token', async (req, res, next) => {
+  const link = await getRecipientLink.get(req.params.token);
   if (!link) return res.status(410).render('error', { title: 'Link no longer valid', message: 'This share link has been used up or revoked. Ask the person who shared it for a new one.' });
   req.recipientPublicToken = link.recipient_token;
   req.recipientImageToken = link.image_token;
@@ -95,7 +99,7 @@ router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsen
       return res.status(400).render('error', { title: 'Report error', message: 'Complete the bot check before submitting.' });
     }
 
-    const image = getImage.get(req.recipientImageToken || req.params.token);
+    const image = await getImage.get(req.recipientImageToken || req.params.token);
     const reason = REPORT_REASONS.has(req.body.reason) ? req.body.reason : null;
     const details = String(req.body.details || '').trim().slice(0, 2000) || null;
     const viewRef = String(req.body.view_ref || '').trim().slice(0, 120) || null;
@@ -112,7 +116,7 @@ router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsen
     }
 
     const first = req.files[0];
-    const result = insertReport.run(
+    const result = await insertReport.run(
       image.id,
       req.user.id,
       viewRef,
@@ -124,7 +128,7 @@ router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsen
       Date.now(),
       null
     );
-    for (const file of req.files) insertProof.run(result.lastInsertRowid, file.filename, file.mimetype, file.size, Date.now());
+    for (const file of req.files) await insertProof.run(result.lastInsertRowid, file.filename, file.mimetype, file.size, Date.now());
     notify.notifyAdminReport({
       id: result.lastInsertRowid,
       reporterUsername: req.user.username,
@@ -141,16 +145,16 @@ router.post(['/i/:token/report', '/r/:token/report'], requireAuth, requireConsen
   });
 });
 
-router.get('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, (req, res) => {
-  const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
+router.get('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, async (req, res) => {
+  const log = await getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
   if (!log) return res.status(404).render('error', { title: 'Not found', message: 'No such access log entry.' });
-  if (existingLogReport.get(log.id)) return res.redirect(`/dashboard/i/${encodeURIComponent(log.token)}/logs`);
+  if (await existingLogReport.get(log.id)) return res.redirect(`/dashboard/i/${encodeURIComponent(log.token)}/logs`);
   res.render('report-log', { image: log, log, error: null });
 });
 
 router.post('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, limiters.report, (req, res) => {
   proofUpload.array('proofs', 15)(req, res, async (err) => {
-    const log = getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
+    const log = await getOwnerLog.get(req.params.logId, req.params.token, req.user.id, accessLog.retentionCutoff());
     const fail = (message, status = 400) => {
       removeProofs(req.files);
       return res.status(status).render('report-log', { image: log || { token: req.params.token }, log, error: message });
@@ -159,7 +163,7 @@ router.post('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, l
       ? `Screenshot too large (max ${Math.round(config.maxReportBytes / (1024 * 1024))} MB).`
       : err.code === 'LIMIT_UNEXPECTED_FILE' ? 'You may upload up to 15 screenshots.' : 'Screenshot upload failed.');
     if (!log) return fail('No such access log entry.', 404);
-    if (existingLogReport.get(log.id)) return fail('This access log entry was already reported.', 409);
+    if (await existingLogReport.get(log.id)) return fail('This access log entry was already reported.', 409);
     if (!req.session || req.body._csrf !== req.session.csrf_token) return fail('Invalid CSRF token.', 403);
     if (!verifySolution(req.body.altcha)) return fail('Complete the bot check before submitting.', 400);
     const details = String(req.body.details || '').trim().slice(0, 2000);
@@ -171,10 +175,10 @@ router.post('/dashboard/i/:token/logs/:logId/report', requireAuth, widgetPage, l
       return fail('Screenshot is not a valid image.', 400);
     }
     const first = req.files[0];
-    const result = insertReport.run(log.image_id, req.user.id, log.view_id || null, 'unauthorized_redistribution',
+    const result = await insertReport.run(log.image_id, req.user.id, log.view_id || null, 'unauthorized_redistribution',
       details, first.filename,
       first.mimetype, first.size, Date.now(), log.id);
-    for (const file of req.files) insertProof.run(result.lastInsertRowid, file.filename, file.mimetype, file.size, Date.now());
+    for (const file of req.files) await insertProof.run(result.lastInsertRowid, file.filename, file.mimetype, file.size, Date.now());
     notify.notifyAdminReport({
       id: result.lastInsertRowid,
       reporterUsername: req.user.username,

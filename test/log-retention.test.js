@@ -27,6 +27,7 @@ const app = require('../src/server');
 const db = require('../src/db');
 const config = require('../src/config');
 const accessLog = require('../src/access-log');
+const { getDatabase } = require('../src/db-runtime');
 const { deleteUserAccount } = require('../src/user-deletion');
 const { hashPassword, uuidv7 } = require('../src/util/crypto');
 const { newJar, makeReq, form, consent, solveAltcha, csrfFrom } = require('./helpers');
@@ -112,8 +113,8 @@ test('access logs survive image deletion for both the uploader and admins, then 
 
   // Past the window, the sweep erases the rows and both views 404.
   const expired = Date.now() - config.logRetentionAfterDeleteHours * 3600 * 1000 - 1000;
-  db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?').run(expired, imageId);
-  assert.equal(accessLog.purgeExpired(), 1, 'the sweep erases the expired log');
+  await (await getDatabase()).run('UPDATE images SET deleted_at = ? WHERE id = ?', [expired, imageId]);
+  assert.equal(await accessLog.purgeExpired(), 1, 'the sweep erases the expired log');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?').get(imageId).n, 0);
   assert.equal((await owner(ownerPath)).status, 404, 'owner can no longer reach it');
   assert.equal((await admin(adminPath)).status, 404, 'admin can no longer reach it');
@@ -228,13 +229,13 @@ test('deleting an account erases files at once but keeps the access logs for the
   // Past the window the log goes, and the orphaned record goes with it.
   const expired = Date.now() - config.logRetentionAfterDeleteHours * 3600 * 1000 - 1000;
   db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?').run(expired, imageId);
-  accessLog.purgeExpired();
+  await accessLog.purgeExpired();
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?').get(imageId).n, 0, 'log erased');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM images WHERE id = ?').get(imageId).n, 0, 'orphan collected');
   assert.equal((await admin('/admin/images/doomedimg1/logs')).status, 404);
 });
 
-test('the retention sweep spares live images and keeps leak reports', () => {
+test('the retention sweep spares live images and keeps leak reports', async () => {
   const liveId = seedImageWithLog('liveimage1');
   const goneId = seedImageWithLog('goneimage1');
   const goneLog = db.prepare('SELECT id FROM access_logs WHERE image_id = ?').get(goneId).id;
@@ -246,7 +247,7 @@ test('the retention sweep spares live images and keeps leak reports', () => {
 
   const expired = Date.now() - config.logRetentionAfterDeleteHours * 3600 * 1000 - 1000;
   db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?').run(expired, goneId);
-  accessLog.purgeExpired();
+  await accessLog.purgeExpired();
 
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?').get(liveId).n, 1, 'live image untouched');
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = ?').get(goneId).n, 0);

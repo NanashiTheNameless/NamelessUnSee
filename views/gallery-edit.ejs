@@ -57,7 +57,7 @@
     <% } else { %>
       <ol>
         <% for (const it of items) { %>
-          <li class="mono"><a href="/i/<%= it.token %>"><%= it.token %></a><% if (it.title) { %> — <%= it.title %><% } %></li>
+          <li class="mono"><a href="/i/<%= it.token %>"><%= it.token %></a><% if (it.title) { %> - <%= it.title %><% } %></li>
         <% } %>
       </ol>
     <% } %>

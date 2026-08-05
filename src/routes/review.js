@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { requireAdmin, verifyCsrf } = require('../auth');
 const moderation = require('../moderation');
@@ -19,37 +19,42 @@ const router = express.Router();
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadBytes, files: 1 } });
 
-const pending = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const pending = statement(
   `SELECT i.*, u.username AS owner_name, u.email AS owner_email
    FROM images i JOIN users u ON u.id = i.owner_id
    WHERE i.deleted_at IS NULL AND i.moderation_status IN ('review', 'quarantined')
    ORDER BY i.created_at DESC`
 );
-const recentUploads = db.prepare(
+const recentUploads = statement(
   `SELECT i.*, u.username AS owner_name, u.email AS owner_email
    FROM images i JOIN users u ON u.id = i.owner_id
    WHERE i.deleted_at IS NULL
    ORDER BY i.created_at DESC LIMIT 100`
 );
-const getByToken = db.prepare('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
-const getOwner = db.prepare('SELECT username, email FROM users WHERE id = ?');
-const setApproved = db.prepare("UPDATE images SET moderation_status = 'approved' WHERE id = ?");
-const flagForReview = db.prepare(
+const getByToken = statement('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
+const getOwner = statement('SELECT username, email FROM users WHERE id = ?');
+const setApproved = statement("UPDATE images SET moderation_status = 'approved' WHERE id = ?");
+const flagForReview = statement(
   "UPDATE images SET moderation_status = 'review', moderation_reason = 'admin-manual', moderation_score = NULL WHERE id = ? AND deleted_at IS NULL"
 );
-const rejectImg = db.prepare("UPDATE images SET moderation_status = 'rejected', deleted_at = ? WHERE id = ?");
-const setPhash = db.prepare('UPDATE images SET phash = ? WHERE id = ?');
+const rejectImg = statement("UPDATE images SET moderation_status = 'rejected', deleted_at = ? WHERE id = ?");
+const setPhash = statement('UPDATE images SET phash = ? WHERE id = ?');
 
 function unlinkOriginal(img) {
   storage.remove(img).catch(() => {});
 }
 
-router.get('/admin/review', requireAdmin, (req, res) => {
+router.get('/admin/review', requireAdmin, async (req, res) => {
   res.render('review', {
     me: req.user,
-    items: pending.all(),
-    recent: recentUploads.all(),
-    blocklist: moderation.listBlockHashes(),
+    items: await pending.all(),
+    recent: await recentUploads.all(),
+    blocklist: await moderation.listBlockHashes(),
     holdOnReview: config.moderation.holdOnReview,
     nsfwEnabled: config.moderation.nsfw.enabled,
   });
@@ -58,12 +63,12 @@ router.get('/admin/review', requireAdmin, (req, res) => {
 // Allow an administrator to manually place any live upload into the review
 // queue. This is separate from the automatic classifier and is reversible via
 // the normal Allow/Deny review actions.
-router.post('/admin/review/:token/flag', requireAdmin, verifyCsrf, (req, res) => {
-  const img = getByToken.get(req.params.token);
+router.post('/admin/review/:token/flag', requireAdmin, verifyCsrf, async (req, res) => {
+  const img = await getByToken.get(req.params.token);
   if (img) {
-    flagForReview.run(img.id);
-    audit.record(req.user, 'moderation_manual_flag', `${img.token} (owner #${img.owner_id})`);
-    const owner = getOwner.get(img.owner_id);
+    await flagForReview.run(img.id);
+    await audit.record(req.user, 'moderation_manual_flag', `${img.token} (owner #${img.owner_id})`);
+    const owner = await getOwner.get(img.owner_id);
     if (owner) {
       notify.notifyAdminFlag({
         username: owner.username,
@@ -81,7 +86,7 @@ router.post('/admin/review/:token/flag', requireAdmin, verifyCsrf, (req, res) =>
 // Serve the original (un-watermarked) image to admins for review only.
 // Sensitive by nature- restricted to admins, never cached.
 router.get('/admin/review/:token/image', limiters.admin, requireAdmin, async (req, res) => {
-  const img = getByToken.get(req.params.token);
+  const img = await getByToken.get(req.params.token);
   if (!img) return res.status(404).end();
   if (!img.mime || !img.mime.startsWith('video/')) {
     try { await storage.send(res, img); } catch { res.status(404).end(); }
@@ -136,7 +141,7 @@ async function ensurePhash(img) {
   try {
     materialized = await storage.materialize(img);
     const h = await moderation.computePhash(materialized.path);
-    setPhash.run(h, img.id);
+    await setPhash.run(h, img.id);
     return h;
   } catch {
     return null;
@@ -145,48 +150,48 @@ async function ensurePhash(img) {
   }
 }
 
-router.post('/admin/review/:token/allow', requireAdmin, verifyCsrf, (req, res) => {
-  const img = getByToken.get(req.params.token);
+router.post('/admin/review/:token/allow', requireAdmin, verifyCsrf, async (req, res) => {
+  const img = await getByToken.get(req.params.token);
   if (img) {
-    setApproved.run(img.id);
-    audit.record(req.user, 'moderation_allow', `${img.token} (owner #${img.owner_id})`);
+    await setApproved.run(img.id);
+    await audit.record(req.user, 'moderation_allow', `${img.token} (owner #${img.owner_id})`);
   }
   res.redirect('/admin/review');
 });
 
-router.post('/admin/review/:token/deny', requireAdmin, verifyCsrf, (req, res) => {
-  const img = getByToken.get(req.params.token);
+router.post('/admin/review/:token/deny', requireAdmin, verifyCsrf, async (req, res) => {
+  const img = await getByToken.get(req.params.token);
   if (img) {
-    rejectImg.run(Date.now(), img.id);
+    await rejectImg.run(Date.now(), img.id);
     unlinkOriginal(img);
-    audit.record(req.user, 'moderation_deny', `${img.token} (owner #${img.owner_id})`);
+    await audit.record(req.user, 'moderation_deny', `${img.token} (owner #${img.owner_id})`);
   }
   res.redirect('/admin/review');
 });
 
 router.post('/admin/review/:token/blocklist', requireAdmin, verifyCsrf, async (req, res) => {
-  const img = getByToken.get(req.params.token);
+  const img = await getByToken.get(req.params.token);
   if (img) {
     const h = await ensurePhash(img);
-    if (h) moderation.addBlockHash(h, req.body.label || `review ${img.token}`, req.user.id);
-    rejectImg.run(Date.now(), img.id);
+    if (h) await moderation.addBlockHash(h, req.body.label || `review ${img.token}`, req.user.id);
+    await rejectImg.run(Date.now(), img.id);
     unlinkOriginal(img);
-    audit.record(req.user, 'moderation_blocklist', `${img.token} phash ${h || 'n/a'}`);
+    await audit.record(req.user, 'moderation_blocklist', `${img.token} phash ${h || 'n/a'}`);
   }
   res.redirect('/admin/review');
 });
 
 router.post('/admin/review/:token/blocklist-ban', requireAdmin, verifyCsrf, async (req, res) => {
-  const img = getByToken.get(req.params.token);
+  const img = await getByToken.get(req.params.token);
   if (img) {
     const h = await ensurePhash(img);
-    if (h) moderation.addBlockHash(h, req.body.label || `review ${img.token}`, req.user.id);
-    rejectImg.run(Date.now(), img.id);
+    if (h) await moderation.addBlockHash(h, req.body.label || `review ${img.token}`, req.user.id);
+    await rejectImg.run(Date.now(), img.id);
     unlinkOriginal(img);
     if (img.owner_id !== req.user.id) {
-      bans.add({ kind: 'user', value: img.owner_id, block_account: 1, block_view: 1, reason: `content: ${img.token}`, created_by: req.user.id });
+      await bans.add({ kind: 'user', value: img.owner_id, block_account: 1, block_view: 1, reason: `content: ${img.token}`, created_by: req.user.id });
     }
-    audit.record(req.user, 'moderation_blocklist_ban', `${img.token} phash ${h || 'n/a'} + banned owner #${img.owner_id}`);
+    await audit.record(req.user, 'moderation_blocklist_ban', `${img.token} phash ${h || 'n/a'} + banned owner #${img.owner_id}`);
   }
   res.redirect('/admin/review');
 });
@@ -201,16 +206,16 @@ router.post('/admin/blocklist/add', requireAdmin, (req, res) => {
     }
     try {
       const h = await moderation.computePhash(req.file.buffer);
-      moderation.addBlockHash(h, (req.body.label || '').slice(0, 120) || 'manual', req.user.id);
-      audit.record(req.user, 'blocklist_add', `phash ${h}`);
+      await moderation.addBlockHash(h, (req.body.label || '').slice(0, 120) || 'manual', req.user.id);
+      await audit.record(req.user, 'blocklist_add', `phash ${h}`);
     } catch { /* ignore invalid image */ }
     res.redirect('/admin/review');
   });
 });
 
-router.post('/admin/blocklist/:id/delete', requireAdmin, verifyCsrf, (req, res) => {
-  moderation.removeBlockHash(req.params.id);
-  audit.record(req.user, 'blocklist_remove', `#${req.params.id}`);
+router.post('/admin/blocklist/:id/delete', requireAdmin, verifyCsrf, async (req, res) => {
+  await moderation.removeBlockHash(req.params.id);
+  await audit.record(req.user, 'blocklist_remove', `#${req.params.id}`);
   res.redirect('/admin/review');
 });
 

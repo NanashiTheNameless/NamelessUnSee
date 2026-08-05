@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { requireAuth, verifyCsrf } = require('../auth');
 const { randomToken, uuidv7 } = require('../util/crypto');
@@ -42,7 +42,12 @@ function uploadFor(user) {
   return multer(options);
 }
 
-const insertImage = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const insertImage = statement(
   `INSERT INTO images
      (token, owner_id, storage_name, mime, width, height, byte_size, title, created_at,
      ttl_seconds, timer_start, max_views, expires_at,
@@ -63,39 +68,39 @@ const TTL_PRESETS = {
   '30d': 30 * 86400,
   never: null,
 };
-const listMine = db.prepare(
+const listMine = statement(
   `SELECT i.*, (SELECT COUNT(*) FROM access_logs a WHERE a.image_id = i.id AND a.blocked_reason IS NULL) AS views
    FROM images i WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC`
 );
-const getMineByToken = db.prepare('SELECT * FROM images WHERE token = ? AND owner_id = ? AND deleted_at IS NULL');
-const softDelete = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?');
-const getDefaults = db.prepare('SELECT default_ttl, default_timer_start, default_max_views, upload_max_bytes, storage_limit_bytes, rank FROM users WHERE id = ?');
-const storageUsed = db.prepare('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM images WHERE owner_id = ? AND deleted_at IS NULL');
-const insertGallery = db.prepare('INSERT INTO galleries (token, owner_id, title, created_at) VALUES (?, ?, ?, ?)');
-const addGalleryItem = db.prepare('INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)');
+const getMineByToken = statement('SELECT * FROM images WHERE token = ? AND owner_id = ? AND deleted_at IS NULL');
+const softDelete = statement('UPDATE images SET deleted_at = ? WHERE id = ?');
+const getDefaults = statement('SELECT default_ttl, default_timer_start, default_max_views, upload_max_bytes, storage_limit_bytes, rank FROM users WHERE id = ?');
+const storageUsed = statement('SELECT COALESCE(SUM(byte_size), 0) AS bytes FROM images WHERE owner_id = ? AND deleted_at IS NULL');
+const insertGallery = statement('INSERT INTO galleries (token, owner_id, title, created_at) VALUES (?, ?, ?, ?)');
+const addGalleryItem = statement('INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)');
 
 // A deleted image keeps its access log for the retention window, so the owner
 // can still read (and report from) it after the media itself is gone.
-const getMineForLogs = db.prepare(
+const getMineForLogs = statement(
   'SELECT * FROM images WHERE token = ? AND owner_id = ? AND (deleted_at IS NULL OR deleted_at > ?)'
 );
-const listMineDeleted = db.prepare(
+const listMineDeleted = statement(
   `SELECT * FROM images WHERE owner_id = ? AND deleted_at IS NOT NULL AND deleted_at > ?
    ORDER BY deleted_at DESC`
 );
 
-router.get('/dashboard', requireAuth, (req, res) => {
-  const defaults = getDefaults.get(req.user.id) || {};
+router.get('/dashboard', requireAuth, async (req, res) => {
+  const defaults = await getDefaults.get(req.user.id) || {};
   const effective = ranks.limits({ ...req.user, ...defaults });
   res.render('dashboard', {
     me: req.user,
-    images: listMine.all(req.user.id),
-    recentlyDeleted: listMineDeleted.all(req.user.id, accessLog.retentionCutoff()),
+    images: await listMine.all(req.user.id),
+    recentlyDeleted: await listMineDeleted.all(req.user.id, accessLog.retentionCutoff()),
     logRetentionHours: config.logRetentionAfterDeleteHours,
     baseUrl: config.baseUrl,
     ttlHours: config.imageTtlHours,
     maxMb: Number.isFinite(effective.uploadBytes) ? Math.round(effective.uploadBytes / (1024 * 1024)) : null,
-    storageUsed: storageUsed.get(req.user.id).bytes,
+    storageUsed: (await storageUsed.get(req.user.id)).bytes,
     storageLimit: effective.storageBytes,
     rank: req.user.rank,
     defaults,
@@ -134,20 +139,20 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
       return res.status(400).render('error', { title: 'Upload error', message: 'Complete the bot check before uploading.' });
     }
 
-    const limits = getDefaults.get(req.user.id) || {};
+    const limits = await getDefaults.get(req.user.id) || {};
     const effective = ranks.limits({ ...req.user, ...limits });
     const totalBytes = files.reduce((sum, file) => sum + (file.size || 0), 0);
     if (files.some((file) => file.size > effective.uploadBytes)) {
       removeStaged();
       return res.status(400).render('error', { title: 'Upload error', message: `File too large (your limit is ${Math.round(effective.uploadBytes / (1024 * 1024))} MB per file).` });
     }
-    const used = storageUsed.get(req.user.id).bytes;
+    const used = (await storageUsed.get(req.user.id)).bytes;
     if (used + totalBytes > effective.storageBytes) {
       removeStaged();
       return res.status(400).render('error', { title: 'Upload error', message: `Storage limit reached. You have ${Math.max(0, Math.floor((effective.storageBytes - used) / (1024 * 1024)))} MB remaining.` });
     }
 
-    const defaults = getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
+    const defaults = await getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
     const requestedTtl = req.body.ttl || defaults.default_ttl;
     const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
     const ttlSeconds = TTL_PRESETS[ttlKey];
@@ -190,7 +195,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
         const stored = await storage.put(filePath, storageName);
         fs.unlink(filePath, () => {});
         try {
-          const info = insertImage.run({
+          const info = await insertImage.run({
             token, owner_id: req.user.id, storage_name: stored.storage_name, mime: file.mimetype,
             width: dims.width, height: dims.height, byte_size: file.size, title, created_at: now,
             ttl_seconds: ttlSeconds, timer_start: timerStart, max_views: maxViews, expires_at: expiresAt,
@@ -198,7 +203,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
             moderation_score: mod.score, moderation_details: mod.details ? JSON.stringify(mod.details) : null,
             storage_backend: stored.storage_backend, storage_encrypted: stored.storage_encrypted,
           });
-          const image = db.prepare('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
+          const image = await statement('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
           created.push(image);
         } catch (error) {
           await storage.remove(stored).catch(() => {});
@@ -212,7 +217,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     } catch (error) {
       removeStaged();
       for (const image of created) {
-        softDelete.run(Date.now(), image.id);
+        await softDelete.run(Date.now(), image.id);
         storage.remove(image).catch(() => {});
       }
       const message = error.message === 'That file is not a valid image or video.' ? error.message : 'The upload could not be stored.';
@@ -223,9 +228,12 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     if (created.length > 1) {
       const now = Date.now();
       galleryToken = uuidv7(now);
-      const galleryId = insertGallery.run(galleryToken, req.user.id, title || 'Uploaded gallery', now).lastInsertRowid;
-      const tx = db.transaction(() => created.forEach((image, index) => addGalleryItem.run(galleryId, image.id, index + 1, now)));
-      tx();
+      const galleryId = (await insertGallery.run(galleryToken, req.user.id, title || 'Uploaded gallery', now)).lastInsertRowid;
+      const db = await getDatabase();
+      await db.batch(created.map((image, index) => ({
+        sql: 'INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)',
+        args: [galleryId, image.id, index + 1, now],
+      })));
     }
     res.redirect('/dashboard?uploaded=1' + (flagged ? '&flagged=1' : '') + (galleryToken ? `&gallery=${encodeURIComponent(galleryToken)}` : ''));
   });
@@ -261,14 +269,14 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
         return res.status(500).render('error', { title: 'Upload error', message: 'The upload could not be staged.' });
       }
     }
-    const limits = getDefaults.get(req.user.id) || {};
+    const limits = await getDefaults.get(req.user.id) || {};
     const effective = ranks.limits({ ...req.user, ...limits });
     const uploadLimit = effective.uploadBytes;
     if (req.file.size > uploadLimit) {
       fs.unlink(filePath, () => {});
       return res.status(400).render('error', { title: 'Upload error', message: `File too large (your limit is ${Math.round(uploadLimit / (1024 * 1024))} MB).` });
     }
-    const used = storageUsed.get(req.user.id).bytes;
+    const used = (await storageUsed.get(req.user.id)).bytes;
     const storageLimit = effective.storageBytes;
     if (used + req.file.size > storageLimit) {
       fs.unlink(filePath, () => {});
@@ -288,7 +296,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     const now = Date.now();
 
     // Retention: duration preset and/or a maximum view count.
-    const defaults = getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
+    const defaults = await getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
     const requestedTtl = req.body.ttl || defaults.default_ttl;
     const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
     const ttlSeconds = TTL_PRESETS[ttlKey];
@@ -333,7 +341,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     }
     fs.unlink(filePath, () => {});
     try {
-      insertImage.run({
+      await insertImage.run({
       token,
       owner_id: req.user.id,
       storage_name: stored.storage_name,
@@ -377,8 +385,8 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
   });
 });
 
-router.get('/dashboard/i/:token/logs', requireAuth, (req, res) => {
-  const img = getMineForLogs.get(req.params.token, req.user.id, accessLog.retentionCutoff());
+router.get('/dashboard/i/:token/logs', requireAuth, async (req, res) => {
+  const img = await getMineForLogs.get(req.params.token, req.user.id, accessLog.retentionCutoff());
   if (!img) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
 
   const q = (req.query.q || '').toString().trim().slice(0, 100);
@@ -400,51 +408,51 @@ router.get('/dashboard/i/:token/logs', requireAuth, (req, res) => {
     openReports: 0,
     notice: null,
     error: null,
-    ...accessLog.readPage(img.id, { q, page: req.query.page }),
+    ...(await accessLog.readPage(img.id, { q, page: req.query.page })),
   });
 });
 
 // --- per-recipient view links ----------------------------------------------
-const listLinks = db.prepare('SELECT * FROM view_links WHERE image_id = ? ORDER BY created_at DESC');
-const insertLink = db.prepare(
+const listLinks = statement('SELECT * FROM view_links WHERE image_id = ? ORDER BY created_at DESC');
+const insertLink = statement(
   'INSERT INTO view_links (image_id, token, label, max_uses, created_at) VALUES (?, ?, ?, ?, ?)'
 );
-const revokeLink = db.prepare('UPDATE view_links SET revoked_at = ? WHERE id = ? AND image_id = ?');
+const revokeLink = statement('UPDATE view_links SET revoked_at = ? WHERE id = ? AND image_id = ?');
 
-router.get('/dashboard/i/:token/links', requireAuth, (req, res) => {
-  const img = getMineByToken.get(req.params.token, req.user.id);
+router.get('/dashboard/i/:token/links', requireAuth, async (req, res) => {
+  const img = await getMineByToken.get(req.params.token, req.user.id);
   if (!img) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
   res.render('links', {
     me: req.user,
     image: img,
-    links: listLinks.all(img.id),
+    links: await listLinks.all(img.id),
     baseUrl: config.baseUrl,
     created: req.query.created === '1',
   });
 });
 
-router.post('/dashboard/i/:token/links', requireAuth, verifyCsrf, (req, res) => {
-  const img = getMineByToken.get(req.params.token, req.user.id);
+router.post('/dashboard/i/:token/links', requireAuth, verifyCsrf, async (req, res) => {
+  const img = await getMineByToken.get(req.params.token, req.user.id);
   if (!img) return res.status(404).render('error', { title: 'Not found', message: 'No such image.' });
   const label = String(req.body.label || '').trim().slice(0, 80) || null;
   const rawMax = String(req.body.max_uses || '').trim();
   let maxUses = rawMax ? parseInt(rawMax, 10) : null;
   maxUses = Number.isInteger(maxUses) && maxUses > 0 ? maxUses : null;
   if (req.body.one_time === 'on') maxUses = 1;
-  insertLink.run(img.id, randomToken(20), label, maxUses, Date.now());
+  await insertLink.run(img.id, randomToken(20), label, maxUses, Date.now());
   res.redirect(`/dashboard/i/${encodeURIComponent(img.token)}/links?created=1`);
 });
 
-router.post('/dashboard/i/:token/links/:id/revoke', requireAuth, verifyCsrf, (req, res) => {
-  const img = getMineByToken.get(req.params.token, req.user.id);
-  if (img) revokeLink.run(Date.now(), parseInt(req.params.id, 10) || 0, img.id);
+router.post('/dashboard/i/:token/links/:id/revoke', requireAuth, verifyCsrf, async (req, res) => {
+  const img = await getMineByToken.get(req.params.token, req.user.id);
+  if (img) await revokeLink.run(Date.now(), parseInt(req.params.id, 10) || 0, img.id);
   res.redirect(`/dashboard/i/${encodeURIComponent(req.params.token)}/links`);
 });
 
-router.post('/dashboard/i/:token/delete', requireAuth, verifyCsrf, (req, res) => {
-  const img = getMineByToken.get(req.params.token, req.user.id);
+router.post('/dashboard/i/:token/delete', requireAuth, verifyCsrf, async (req, res) => {
+  const img = await getMineByToken.get(req.params.token, req.user.id);
   if (img) {
-    softDelete.run(Date.now(), img.id);
+    await softDelete.run(Date.now(), img.id);
     storage.remove(img).catch(() => {});
   }
   res.redirect('/dashboard');

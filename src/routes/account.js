@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { hashPassword, verifyPassword, randomToken, uuidv7 } = require('../util/crypto');
 const { createSession, destroySession, requireAuth, verifyCsrf, SESSION_COOKIE } = require('../auth');
@@ -19,46 +19,52 @@ const abuse = require('../abuse');
 const router = express.Router();
 router.use(limiters.auth);
 
-const getByEmail = db.prepare('SELECT * FROM users WHERE email = ?');
-const getByUsername = db.prepare('SELECT * FROM users WHERE username = ?');
-const setLastIp = db.prepare('UPDATE users SET last_ip = ? WHERE id = ?');
-const setEmailVerified = db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?');
-const deleteUserById = db.prepare('DELETE FROM users WHERE id = ?');
-const countUsers = db.prepare('SELECT COUNT(*) AS n FROM users');
-const getUserById = db.prepare('SELECT * FROM users WHERE id = ?');
-const insertChallenge = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+
+const getByEmail = statement('SELECT * FROM users WHERE email = ?');
+const getByUsername = statement('SELECT * FROM users WHERE username = ?');
+const setLastIp = statement('UPDATE users SET last_ip = ? WHERE id = ?');
+const setEmailVerified = statement('UPDATE users SET email_verified = 1 WHERE id = ?');
+const deleteUserById = statement('DELETE FROM users WHERE id = ?');
+const countUsers = statement('SELECT COUNT(*) AS n FROM users');
+const getUserById = statement('SELECT * FROM users WHERE id = ?');
+const insertChallenge = statement(
   `INSERT INTO login_challenges (id, user_id, method, code_hash, csrf_token, next_url, created_at, expires_at, purpose)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 );
-const getChallenge = db.prepare('SELECT * FROM login_challenges WHERE id = ? AND expires_at > ?');
-const deleteChallenge = db.prepare('DELETE FROM login_challenges WHERE id = ?');
-const incrementChallengeAttempts = db.prepare('UPDATE login_challenges SET attempts = attempts + 1 WHERE id = ?');
-const updateChallengeEmail = db.prepare('UPDATE login_challenges SET code_hash = ?, created_at = ?, expires_at = ?, resend_count = resend_count + 1, last_sent_at = ? WHERE id = ?');
-const updateTotpPending = db.prepare('UPDATE users SET totp_pending_secret = ? WHERE id = ?');
-const enableTotp = db.prepare('UPDATE users SET totp_secret = ?, totp_pending_secret = NULL, totp_enabled = 1, totp_last_counter = NULL, twofa_mode = \'email\' WHERE id = ?');
-const disableTotp = db.prepare('UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL, totp_enabled = 0, totp_last_counter = NULL, twofa_mode = \'email\' WHERE id = ?');
-const updateTotpCounter = db.prepare('UPDATE users SET totp_last_counter = ? WHERE id = ?');
-const updateTwofaMode = db.prepare("UPDATE users SET twofa_mode = ? WHERE id = ? AND totp_enabled = 1");
-const insertRecovery = db.prepare(
+const getChallenge = statement('SELECT * FROM login_challenges WHERE id = ? AND expires_at > ?');
+const deleteChallenge = statement('DELETE FROM login_challenges WHERE id = ?');
+const incrementChallengeAttempts = statement('UPDATE login_challenges SET attempts = attempts + 1 WHERE id = ?');
+const updateChallengeEmail = statement('UPDATE login_challenges SET code_hash = ?, created_at = ?, expires_at = ?, resend_count = resend_count + 1, last_sent_at = ? WHERE id = ?');
+const updateTotpPending = statement('UPDATE users SET totp_pending_secret = ? WHERE id = ?');
+const enableTotp = statement('UPDATE users SET totp_secret = ?, totp_pending_secret = NULL, totp_enabled = 1, totp_last_counter = NULL, twofa_mode = \'email\' WHERE id = ?');
+const disableTotp = statement('UPDATE users SET totp_secret = NULL, totp_pending_secret = NULL, totp_enabled = 0, totp_last_counter = NULL, twofa_mode = \'email\' WHERE id = ?');
+const updateTotpCounter = statement('UPDATE users SET totp_last_counter = ? WHERE id = ?');
+const updateTwofaMode = statement("UPDATE users SET twofa_mode = ? WHERE id = ? AND totp_enabled = 1");
+const insertRecovery = statement(
   `INSERT INTO recovery_challenges (id, user_id, kind, target, code_hash, csrf_token, created_at, expires_at)
    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
 );
-const getRecovery = db.prepare('SELECT * FROM recovery_challenges WHERE id = ? AND expires_at > ?');
-const deleteRecovery = db.prepare('DELETE FROM recovery_challenges WHERE id = ?');
-const deleteUserRecovery = db.prepare('DELETE FROM recovery_challenges WHERE user_id = ? AND kind = ?');
-const incrementRecoveryAttempts = db.prepare('UPDATE recovery_challenges SET attempts = attempts + 1 WHERE id = ?');
-const updateEmail = db.prepare('UPDATE users SET email = ? WHERE id = ?');
-const updatePassword = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
-const deleteUserSessions = db.prepare('DELETE FROM sessions WHERE user_id = ?');
-const deleteOtherUserSessions = db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?');
-const updateDefaults = db.prepare(
+const getRecovery = statement('SELECT * FROM recovery_challenges WHERE id = ? AND expires_at > ?');
+const deleteRecovery = statement('DELETE FROM recovery_challenges WHERE id = ?');
+const deleteUserRecovery = statement('DELETE FROM recovery_challenges WHERE user_id = ? AND kind = ?');
+const incrementRecoveryAttempts = statement('UPDATE recovery_challenges SET attempts = attempts + 1 WHERE id = ?');
+const updateEmail = statement('UPDATE users SET email = ? WHERE id = ?');
+const updatePassword = statement('UPDATE users SET password_hash = ? WHERE id = ?');
+const deleteUserSessions = statement('DELETE FROM sessions WHERE user_id = ?');
+const deleteOtherUserSessions = statement('DELETE FROM sessions WHERE user_id = ? AND id != ?');
+const updateDefaults = statement(
   'UPDATE users SET default_ttl = ?, default_timer_start = ?, default_max_views = ? WHERE id = ?'
 );
-const insertUser = db.prepare(
+const insertUser = statement(
   `INSERT INTO users (id, email, username, password_hash, role, status, created_at, approved_at, trust_until, email_verified, signup_reason)
    VALUES (@id, @email, @username, @password_hash, @role, @status, @created_at, @approved_at, @trust_until, @email_verified, @signup_reason)`
 );
-const insertSignupVerification = db.prepare(
+const insertSignupVerification = statement(
   `INSERT INTO recovery_challenges (id, user_id, kind, target, code_hash, csrf_token, created_at, expires_at)
    VALUES (?, ?, 'signup_email', ?, ?, ?, ?, ?)`
 );
@@ -98,7 +104,7 @@ function clearSignupVerificationCookie(res) {
   res.clearCookie('signup_verify', { path: '/' });
 }
 
-function signupVerificationFromRequest(req) {
+async function signupVerificationFromRequest(req) {
   const id = req.signedCookies && req.signedCookies.signup_verify;
   return id ? getRecovery.get(id, Date.now()) : null;
 }
@@ -108,7 +114,7 @@ async function beginSignupVerification(res, user) {
   const csrf = randomToken(24);
   const code = newEmailCode();
   const now = Date.now();
-  insertSignupVerification.run(id, user.id, user.email, otpHash(code), csrf, now, now + config.twofa.challengeTtlMs);
+  await insertSignupVerification.run(id, user.id, user.email, otpHash(code), csrf, now, now + config.twofa.challengeTtlMs);
   res.cookie('signup_verify', id, {
     httpOnly: true,
     sameSite: 'lax',
@@ -118,25 +124,25 @@ async function beginSignupVerification(res, user) {
     path: '/',
   });
   if (!(await notify.sendSignupVerification(user, code))) {
-    deleteRecovery.run(id);
+    await deleteRecovery.run(id);
     clearSignupVerificationCookie(res);
     return null;
   }
   return { csrf, email: user.email };
 }
 
-function recoveryFromRequest(req) {
+async function recoveryFromRequest(req) {
   const id = req.signedCookies && req.signedCookies.recovery;
   return id ? getRecovery.get(id, Date.now()) : null;
 }
 
 async function beginRecovery(res, user, kind, target = null) {
-  deleteUserRecovery.run(user.id, kind);
+  await deleteUserRecovery.run(user.id, kind);
   const id = randomToken(24);
   const csrf = randomToken(24);
   const code = newEmailCode();
   const now = Date.now();
-  insertRecovery.run(id, user.id, kind, target, otpHash(code), csrf, now, now + config.twofa.challengeTtlMs);
+  await insertRecovery.run(id, user.id, kind, target, otpHash(code), csrf, now, now + config.twofa.challengeTtlMs);
   res.cookie('recovery', id, {
     httpOnly: true,
     sameSite: 'lax',
@@ -147,7 +153,7 @@ async function beginRecovery(res, user, kind, target = null) {
   });
   const purpose = kind === 'password' ? 'password reset' : kind === 'email' ? 'email change' : 'password change';
   if (!(await notify.sendRecoveryCode(user, code, purpose))) {
-    deleteRecovery.run(id);
+    await deleteRecovery.run(id);
     clearRecoveryCookie(res);
     return null;
   }
@@ -178,7 +184,7 @@ async function beginTwofa(res, user, nextUrl, method) {
   const csrf = randomToken(24);
   const now = Date.now();
   const code = method === 'email' ? newEmailCode() : null;
-  insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, nextUrl, now, now + config.twofa.challengeTtlMs, 'login');
+  await insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, nextUrl, now, now + config.twofa.challengeTtlMs, 'login');
   res.cookie('twofa', id, {
     httpOnly: true,
     sameSite: 'lax',
@@ -189,7 +195,7 @@ async function beginTwofa(res, user, nextUrl, method) {
   });
   const link = `${config.baseUrl}/login/2fa/email?token=${encodeURIComponent(code || '')}`;
   if (method === 'email' && !(await notify.sendLoginCode(user, code, link))) {
-    deleteChallenge.run(id);
+    await deleteChallenge.run(id);
     clearTwofaCookie(res);
     return null;
   }
@@ -200,7 +206,7 @@ async function beginAccountDeletionTwofa(res, user, method) {
   // Clear any existing 2FA cookie/challenge for this browser (defence-in-depth).
   const existingId = res.req && res.req.signedCookies && res.req.signedCookies.twofa;
   if (existingId) {
-    try { deleteChallenge.run(existingId); } catch { /* ignore */ }
+    try { await deleteChallenge.run(existingId); } catch { /* ignore */ }
     clearTwofaCookie(res);
   }
 
@@ -208,9 +214,9 @@ async function beginAccountDeletionTwofa(res, user, method) {
   const csrf = randomToken(24);
   const now = Date.now();
 
-  // For deletion we do not use the “verify via email link” shortcut.
+  // For deletion we do not use the "verify via email link" shortcut.
   const code = method === 'email' ? newEmailCode() : null;
-  insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, '/account?tab=security', now, now + config.twofa.challengeTtlMs, 'account_delete');
+  await insertChallenge.run(id, user.id, method, code ? otpHash(code) : null, csrf, '/account?tab=security', now, now + config.twofa.challengeTtlMs, 'account_delete');
 
   res.cookie('twofa', id, {
     httpOnly: true,
@@ -224,7 +230,7 @@ async function beginAccountDeletionTwofa(res, user, method) {
   if (method === 'email') {
     const ok = await notify.sendAccountDeletionCode(user, code);
     if (!ok) {
-      deleteChallenge.run(id);
+      await deleteChallenge.run(id);
       clearTwofaCookie(res);
       return null;
     }
@@ -232,9 +238,9 @@ async function beginAccountDeletionTwofa(res, user, method) {
   return { csrf, method };
 }
 
-function accountDeleteChallenge(req) {
+async function accountDeleteChallenge(req) {
   const id = req.signedCookies && req.signedCookies.twofa;
-  const challenge = id ? getChallenge.get(id, Date.now()) : null;
+  const challenge = id ? await getChallenge.get(id, Date.now()) : null;
   if (!challenge) return null;
   if (challenge.purpose !== 'account_delete') return null;
   if (challenge.user_id !== req.user.id) return null;
@@ -265,23 +271,23 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
   abuse.recordSignup(req);
   if (!verifySolution(req.body.altcha))
     return res.status(400).render('signup', { error: 'Bot check failed. Please try again.', values });
-  if (bans.emailBan(email).account || bans.isAccountBannedIp(geo.clientIp(req)))
+  if ((await bans.emailBan(email)).account || await bans.isAccountBannedIp(geo.clientIp(req)))
     return res.status(403).render('signup', { error: 'Sign-ups are not permitted from this email or network.', values });
   if (!validEmail(email)) return res.status(400).render('signup', { error: 'Enter a valid email address.', values });
   if (!validUsername(username))
     return res.status(400).render('signup', { error: 'Username must be 3-32 chars: letters, numbers, . _ -', values });
   if (password.length < 10)
     return res.status(400).render('signup', { error: 'Password must be at least 10 characters.', values });
-  if (getByEmail.get(email)) return res.status(409).render('signup', { error: 'That email is already registered.', values });
-  if (getByUsername.get(username)) return res.status(409).render('signup', { error: 'That username is taken.', values });
+  if (await getByEmail.get(email)) return res.status(409).render('signup', { error: 'That email is already registered.', values });
+  if (await getByUsername.get(username)) return res.status(409).render('signup', { error: 'That username is taken.', values });
 
   // The very first account is auto-approved so the system is usable out of the
   // box, but it is a regular user- admins are only ever created via the CLI
   // (`yarn create-admin`). Every subsequent signup is pending until approved.
-  const isFirst = countUsers.get().n === 0;
+  const isFirst = (await countUsers.get()).n === 0;
   const now = Date.now();
   const userId = uuidv7(now);
-  const info = insertUser.run({
+  await insertUser.run({
     id: userId,
     email,
     username,
@@ -299,15 +305,15 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
   if (config.emailVerificationRequired) {
     const verification = await beginSignupVerification(res, user);
     if (!verification) {
-      deleteUserById.run(userId);
+      await deleteUserById.run(userId);
       return res.status(503).render('signup', { error: 'Email verification is temporarily unavailable. Please try again later.', values });
     }
     return res.render('signup-verify', { ...verification, error: null });
   }
 
   if (isFirst) {
-    setLastIp.run(geo.clientIp(req) || null, userId);
-    createSession(res, userId);
+    await setLastIp.run(geo.clientIp(req) || null, userId);
+    await createSession(res, userId);
     return res.redirect('/dashboard');
   }
 
@@ -319,13 +325,13 @@ router.post('/signup', limiters.signup, limiters.signupEmail, gatePage, widgetPa
 
 // Mark the address verified and continue: straight in if the account is already
 // approved, otherwise into the pending queue with the admins notified.
-function finishSignupVerification(req, res, challenge, user) {
-  setEmailVerified.run(user.id);
-  deleteRecovery.run(challenge.id);
+async function finishSignupVerification(req, res, challenge, user) {
+  await setEmailVerified.run(user.id);
+  await deleteRecovery.run(challenge.id);
   clearSignupVerificationCookie(res);
   if (user.status === 'approved') {
-    setLastIp.run(geo.clientIp(req) || null, user.id);
-    createSession(res, user.id);
+    await setLastIp.run(geo.clientIp(req) || null, user.id);
+    await createSession(res, user.id);
     return res.redirect('/dashboard');
   }
   notify.notifyPendingSignup(user).catch(() => {});
@@ -336,14 +342,14 @@ function finishSignupVerification(req, res, challenge, user) {
 // Finish the verification in one click from the email. Like the login link, it
 // is bound to the browser that started the signup: the challenge id lives in a
 // signed cookie, so the token alone is useless elsewhere.
-router.get('/signup/verify/email', limiters.login, widgetPage, (req, res) => {
-  const challenge = signupVerificationFromRequest(req);
+router.get('/signup/verify/email', limiters.login, widgetPage, async (req, res) => {
+  const challenge = await signupVerificationFromRequest(req);
   const token = typeof req.query.token === 'string' ? req.query.token : '';
-  const user = challenge && getUserById.get(challenge.user_id);
+  const user = challenge && await getUserById.get(challenge.user_id);
   const valid = challenge && user && challenge.kind === 'signup_email' &&
     challenge.attempts < 5 && otpHash(token) === challenge.code_hash;
   if (!valid) {
-    if (challenge) incrementRecoveryAttempts.run(challenge.id);
+    if (challenge) await incrementRecoveryAttempts.run(challenge.id);
     return res.status(403).render('signup', {
       error: 'This verification link is invalid, expired, or belongs to another browser.',
       values: {},
@@ -352,8 +358,8 @@ router.get('/signup/verify/email', limiters.login, widgetPage, (req, res) => {
   return finishSignupVerification(req, res, challenge, user);
 });
 
-router.post('/signup/verify', limiters.login, widgetPage, (req, res) => {
-  const challenge = signupVerificationFromRequest(req);
+router.post('/signup/verify', limiters.login, widgetPage, async (req, res) => {
+  const challenge = await signupVerificationFromRequest(req);
   const code = String(req.body.code || '').trim();
   const validChallenge = challenge && challenge.kind === 'signup_email' && challenge.attempts < 5 &&
     req.body._csrf === challenge.csrf_token;
@@ -362,13 +368,13 @@ router.post('/signup/verify', limiters.login, widgetPage, (req, res) => {
     return res.status(403).render('signup', { error: 'Email verification expired. Please sign up again.', values: {} });
   }
   if (otpHash(code) !== challenge.code_hash) {
-    incrementRecoveryAttempts.run(challenge.id);
+    await incrementRecoveryAttempts.run(challenge.id);
     return res.status(400).render('signup-verify', { email: challenge.target || '', csrf: challenge.csrf_token, error: 'Invalid verification code.' });
   }
 
-  const user = getUserById.get(challenge.user_id);
+  const user = await getUserById.get(challenge.user_id);
   if (!user) {
-    deleteRecovery.run(challenge.id);
+    await deleteRecovery.run(challenge.id);
     clearSignupVerificationCookie(res);
     return res.status(403).render('signup', { error: 'This signup is no longer available.', values: {} });
   }
@@ -387,7 +393,7 @@ router.get('/forgot-username', widgetPage, (req, res) => renderForgot(res, 'user
 router.post('/forgot-password', limiters.login, widgetPage, async (req, res) => {
   const identifier = String(req.body.identifier || '').trim();
   if (!verifySolution(req.body.altcha)) return renderForgot(res, 'password', 'Bot check failed. Please try again.', null, identifier);
-  const user = getByEmail.get(identifier.toLowerCase()) || getByUsername.get(identifier);
+  const user = await getByEmail.get(identifier.toLowerCase()) || await getByUsername.get(identifier);
   if (!user) return renderForgot(res, 'password', null, 'If that account exists, a reset code has been sent to its email address.');
   const recovery = await beginRecovery(res, user, 'password');
   if (!recovery) return renderForgot(res, 'password', 'Recovery email is temporarily unavailable. Please try again later.');
@@ -397,7 +403,7 @@ router.post('/forgot-password', limiters.login, widgetPage, async (req, res) => 
 router.post('/forgot-email', limiters.login, widgetPage, async (req, res) => {
   const username = String(req.body.username || '').trim();
   if (!verifySolution(req.body.altcha)) return renderForgot(res, 'email', 'Bot check failed. Please try again.', null, username);
-  const user = getByUsername.get(username);
+  const user = await getByUsername.get(username);
   if (user) await notify.sendForgottenValue(user, 'email address', user.email);
   renderForgot(res, 'email', null, 'If that username exists, a reminder is on its way to the account\'s email address. Check the inboxes you might have signed up with.');
 });
@@ -405,14 +411,14 @@ router.post('/forgot-email', limiters.login, widgetPage, async (req, res) => {
 router.post('/forgot-username', limiters.login, widgetPage, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!verifySolution(req.body.altcha)) return renderForgot(res, 'username', 'Bot check failed. Please try again.', null, email);
-  const user = getByEmail.get(email);
+  const user = await getByEmail.get(email);
   if (user) await notify.sendForgottenValue(user, 'username', user.username);
   renderForgot(res, 'username', null, 'If that email address is registered, your username is on its way to it.');
 });
 
-router.post('/forgot-password/verify', limiters.login, widgetPage, (req, res) => {
-  const challenge = recoveryFromRequest(req);
-  const user = challenge && getUserById.get(challenge.user_id);
+router.post('/forgot-password/verify', limiters.login, widgetPage, async (req, res) => {
+  const challenge = await recoveryFromRequest(req);
+  const user = challenge && await getUserById.get(challenge.user_id);
   const code = String(req.body.code || '').trim();
   const password = req.body.password || '';
   if (!challenge || challenge.kind !== 'password' || challenge.attempts >= 5 || req.body._csrf !== challenge.csrf_token) {
@@ -420,13 +426,13 @@ router.post('/forgot-password/verify', limiters.login, widgetPage, (req, res) =>
     return res.status(403).render('login', { error: 'Recovery expired. Please start again.', next: '/login', values: {} });
   }
   if (otpHash(code) !== challenge.code_hash) {
-    incrementRecoveryAttempts.run(challenge.id);
+    await incrementRecoveryAttempts.run(challenge.id);
     return recoveryError(res, 'Invalid recovery code.', 'password', { csrf: challenge.csrf_token, email: user ? user.email : '' });
   }
   if (password.length < 10) return recoveryError(res, 'Password must be at least 10 characters.', 'password', { csrf: challenge.csrf_token, email: user.email });
-  updatePassword.run(hashPassword(password), user.id);
-  deleteUserSessions.run(user.id);
-  deleteRecovery.run(challenge.id);
+  await updatePassword.run(hashPassword(password), user.id);
+  await deleteUserSessions.run(user.id);
+  await deleteRecovery.run(challenge.id);
   clearRecoveryCookie(res);
   res.redirect('/login?reset=1');
 });
@@ -445,7 +451,7 @@ router.post('/login', limiters.login, widgetPage, async (req, res) => {
 
   if (!verifySolution(req.body.altcha))
     return res.status(400).render('login', { error: 'Bot check failed. Please try again.', next: nextUrl, values });
-  const user = getByEmail.get(identifier) || getByUsername.get(req.body.identifier || '');
+  const user = await getByEmail.get(identifier) || await getByUsername.get(req.body.identifier || '');
   const fail = () => res.status(401).render('login', { error: 'Invalid credentials.', next: nextUrl, values });
 
   if (!user) return fail();
@@ -459,13 +465,13 @@ router.post('/login', limiters.login, widgetPage, async (req, res) => {
     return res.status(403).render('login', { error: 'Your account request was declined.', next: nextUrl, values });
 
   const ip = geo.clientIp(req);
-  if (bans.userBan(user.id).account || bans.emailBan(user.email).account || bans.isAccountBannedIp(ip))
+  if ((await bans.userBan(user.id)).account || (await bans.emailBan(user.email)).account || await bans.isAccountBannedIp(ip))
     return res.status(403).render('login', { error: 'This account has been suspended.', next: nextUrl, values });
 
   if (!config.twofa.enabled) {
     clearTwofaBlockCookie(res);
-    setLastIp.run(ip || null, user.id);
-    createSession(res, user.id);
+    await setLastIp.run(ip || null, user.id);
+    await createSession(res, user.id);
     return res.redirect(nextUrl);
   }
 
@@ -490,11 +496,11 @@ router.post('/login', limiters.login, widgetPage, async (req, res) => {
   res.render('login-2fa', challenge);
 });
 
-router.get('/login/2fa/email', (req, res) => {
+router.get('/login/2fa/email', async (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
-  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  const challenge = challengeId && await getChallenge.get(challengeId, Date.now());
   const token = typeof req.query.token === 'string' ? req.query.token : '';
-  const user = challenge && getUserById.get(challenge.user_id);
+  const user = challenge && await getUserById.get(challenge.user_id);
   const valid =
     challenge &&
     user &&
@@ -503,23 +509,23 @@ router.get('/login/2fa/email', (req, res) => {
     challenge.attempts < 5 &&
     otpHash(token) === challenge.code_hash;
   if (!valid) return res.status(403).render('login', { error: 'This verification link is invalid, expired, or belongs to another browser.', next: '/dashboard', values: {} });
-  deleteChallenge.run(challenge.id);
+  await deleteChallenge.run(challenge.id);
   clearTwofaCookie(res);
   clearTwofaBlockCookie(res);
-  setLastIp.run(geo.clientIp(req) || null, user.id);
-  createSession(res, user.id);
+  await setLastIp.run(geo.clientIp(req) || null, user.id);
+  await createSession(res, user.id);
   res.redirect(safeNext(challenge.next_url));
 });
 
 router.post('/login/2fa/resend', limiters.login, widgetPage, async (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
-  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  const challenge = challengeId && await getChallenge.get(challengeId, Date.now());
   const nextUrl = safeNext(req.body.next);
   if (!challenge || challenge.purpose !== 'login' || challenge.method !== 'email' || req.body._csrf !== challenge.csrf_token) {
     clearTwofaCookie(res);
     return res.status(403).render('login', { error: 'Verification expired. Please log in again.', next: nextUrl, values: {} });
   }
-  const user = getUserById.get(challenge.user_id);
+  const user = await getUserById.get(challenge.user_id);
   if (!user) return res.status(403).render('login', { error: 'Verification expired. Please log in again.', next: nextUrl, values: {} });
 
   const now = Date.now();
@@ -538,7 +544,7 @@ router.post('/login/2fa/resend', limiters.login, widgetPage, async (req, res) =>
   }
   if (count >= RESEND_DELAYS.length) {
     const blockedUntil = now + RESEND_LOCK_MS;
-    deleteChallenge.run(challenge.id);
+    await deleteChallenge.run(challenge.id);
     clearTwofaCookie(res);
     res.cookie('twofa_block', String(blockedUntil), {
       httpOnly: true,
@@ -567,7 +573,7 @@ router.post('/login/2fa/resend', limiters.login, widgetPage, async (req, res) =>
       resendWaitSeconds: 0,
     });
   }
-  updateChallengeEmail.run(otpHash(code), now, now + config.twofa.challengeTtlMs, now, challenge.id);
+  await updateChallengeEmail.run(otpHash(code), now, now + config.twofa.challengeTtlMs, now, challenge.id);
   return res.render('login-2fa', {
     csrf: challenge.csrf_token,
     method: 'email',
@@ -578,16 +584,16 @@ router.post('/login/2fa/resend', limiters.login, widgetPage, async (req, res) =>
   });
 });
 
-router.post('/login/2fa', limiters.login, widgetPage, (req, res) => {
+router.post('/login/2fa', limiters.login, widgetPage, async (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
-  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  const challenge = challengeId && await getChallenge.get(challengeId, Date.now());
   const nextUrl = safeNext(req.body.next);
   if (!challenge || challenge.purpose !== 'login' || challenge.attempts >= 5 || req.body._csrf !== challenge.csrf_token) {
     clearTwofaCookie(res);
     return res.status(403).render('login', { error: 'Verification expired. Please log in again.', next: nextUrl, values: {} });
   }
 
-  const user = getUserById.get(challenge.user_id);
+  const user = await getUserById.get(challenge.user_id);
   let valid = false;
   let totpCounter = null;
   if (user && challenge.method === 'email') valid = otpHash(req.body.code || '') === challenge.code_hash;
@@ -596,7 +602,7 @@ router.post('/login/2fa', limiters.login, widgetPage, (req, res) => {
     valid = totpCounter !== null && (user.totp_last_counter === null || totpCounter > user.totp_last_counter);
   }
   if (!valid) {
-    incrementChallengeAttempts.run(challenge.id);
+    await incrementChallengeAttempts.run(challenge.id);
     const delay = challenge.method === 'email' ? (RESEND_DELAYS[Number(challenge.resend_count || 0)] || 0) : 0;
     const availableAt = (challenge.last_sent_at || challenge.created_at) + delay * 1000;
     return res.status(401).render('login-2fa', {
@@ -609,19 +615,19 @@ router.post('/login/2fa', limiters.login, widgetPage, (req, res) => {
     });
   }
 
-  deleteChallenge.run(challenge.id);
-  if (challenge.method === 'totp') updateTotpCounter.run(totpCounter, user.id);
+  await deleteChallenge.run(challenge.id);
+  if (challenge.method === 'totp') await updateTotpCounter.run(totpCounter, user.id);
   clearTwofaCookie(res);
   clearTwofaBlockCookie(res);
-  setLastIp.run(geo.clientIp(req) || null, user.id);
-  createSession(res, user.id);
+  await setLastIp.run(geo.clientIp(req) || null, user.id);
+  await createSession(res, user.id);
   res.redirect(nextUrl);
 });
 
 const DEFAULT_TTLS = new Set(['1h', '6h', '24h', '3d', '7d', '30d', 'never']);
 
-function renderAccount(res, user, extra = {}) {
-  const current = { ...getUserById.get(user.id), ...user };
+async function renderAccount(res, user, extra = {}) {
+  const current = { ...(await getUserById.get(user.id)), ...user };
   const setupSecret = extra.setupSecret || current.totp_pending_secret || null;
   res.render('account', {
     me: current,
@@ -637,33 +643,33 @@ function renderAccount(res, user, extra = {}) {
   });
 }
 
-function accountRecovery(req, kind) {
-  const challenge = recoveryFromRequest(req);
+async function accountRecovery(req, kind) {
+  const challenge = await recoveryFromRequest(req);
   return challenge && challenge.user_id === req.user.id && challenge.kind === kind ? challenge : null;
 }
 
-router.get('/account', requireAuth, (req, res) => {
+router.get('/account', requireAuth, async (req, res) => {
   const tab = req.query.tab === 'security' ? 'security' : 'defaults';
-  const challenge = tab === 'security' ? (accountRecovery(req, 'email') || accountRecovery(req, 'account_password')) : null;
-  const del = tab === 'security' ? accountDeleteChallenge(req) : null;
-  renderAccount(res, req.user, {
+  const challenge = tab === 'security' ? (await accountRecovery(req, 'email') || await accountRecovery(req, 'account_password')) : null;
+  const del = tab === 'security' ? await accountDeleteChallenge(req) : null;
+  await renderAccount(res, req.user, {
     tab,
     recovery: challenge,
     deleteChallenge: del ? { csrf: del.csrf_token, method: del.method } : null,
   });
 });
 
-router.get('/account/security', requireAuth, (req, res) => {
-  const challenge = accountRecovery(req, 'email') || accountRecovery(req, 'account_password');
-  const del = accountDeleteChallenge(req);
-  renderAccount(res, req.user, {
+router.get('/account/security', requireAuth, async (req, res) => {
+  const challenge = await accountRecovery(req, 'email') || await accountRecovery(req, 'account_password');
+  const del = await accountDeleteChallenge(req);
+  await renderAccount(res, req.user, {
     tab: 'security',
     recovery: challenge,
     deleteChallenge: del ? { csrf: del.csrf_token, method: del.method } : null,
   });
 });
 
-router.post('/account/defaults', requireAuth, verifyCsrf, (req, res) => {
+router.post('/account/defaults', requireAuth, verifyCsrf, async (req, res) => {
   const ttl = DEFAULT_TTLS.has(req.body.default_ttl) ? req.body.default_ttl : null;
   const timer = req.body.default_timer_start === 'upload' ? 'upload' : 'first_view';
   const rawMax = String(req.body.default_max_views || '').trim();
@@ -671,98 +677,99 @@ router.post('/account/defaults', requireAuth, verifyCsrf, (req, res) => {
   if (!ttl || (maxViews !== null && (!Number.isInteger(maxViews) || maxViews < 1))) {
     return renderAccount(res, req.user, { tab: 'defaults', error: 'Choose valid upload defaults.' });
   }
-  updateDefaults.run(ttl, timer, maxViews, req.user.id);
-  renderAccount(res, { ...req.user, default_ttl: ttl, default_timer_start: timer, default_max_views: maxViews }, {
+  await updateDefaults.run(ttl, timer, maxViews, req.user.id);
+  await renderAccount(res, { ...req.user, default_ttl: ttl, default_timer_start: timer, default_max_views: maxViews }, {
     tab: 'defaults',
     notice: 'New-image defaults saved.',
   });
 });
 
-router.post('/account/security/totp/start', requireAuth, verifyCsrf, (req, res) => {
+router.post('/account/security/totp/start', requireAuth, verifyCsrf, async (req, res) => {
   const secret = newTotpSecret();
-  updateTotpPending.run(secret, req.user.id);
-  renderAccount(res, { ...req.user, totp_pending_secret: secret }, { tab: 'security', setupSecret: secret });
+  await updateTotpPending.run(secret, req.user.id);
+  await renderAccount(res, { ...req.user, totp_pending_secret: secret }, { tab: 'security', setupSecret: secret });
 });
 
-router.post('/account/security/totp/method', requireAuth, verifyCsrf, (req, res) => {
+router.post('/account/security/totp/method', requireAuth, verifyCsrf, async (req, res) => {
   const method = req.body.twofa_mode === 'totp' ? 'totp' : 'email';
-  updateTwofaMode.run(method, req.user.id);
+  await updateTwofaMode.run(method, req.user.id);
   const message = method === 'totp' ? 'TOTP selected as the preferred login method.' : 'Email selected as the preferred login method.';
-  renderAccount(res, { ...req.user, twofa_mode: method }, { tab: 'security', notice: message });
+  await renderAccount(res, { ...req.user, twofa_mode: method }, { tab: 'security', notice: message });
 });
 
-router.post('/account/security/totp/confirm', requireAuth, verifyCsrf, (req, res) => {
-  const user = getUserById.get(req.user.id);
+router.post('/account/security/totp/confirm', requireAuth, verifyCsrf, async (req, res) => {
+  const user = await getUserById.get(req.user.id);
   if (!user.totp_pending_secret || !verifyTotp(user.totp_pending_secret, req.body.code)) {
     return renderAccount(res, user, { tab: 'security', error: 'Invalid authenticator code. Check the device time and try again.' });
   }
-  enableTotp.run(user.totp_pending_secret, user.id);
-  renderAccount(res, { ...user, totp_enabled: 1, totp_pending_secret: null }, { tab: 'security', notice: 'TOTP enabled. Email remains the default login method; choose TOTP on the login form to use it instead.' });
+  await enableTotp.run(user.totp_pending_secret, user.id);
+  await renderAccount(res, { ...user, totp_enabled: 1, totp_pending_secret: null }, { tab: 'security', notice: 'TOTP enabled. Email remains the default login method; choose TOTP on the login form to use it instead.' });
 });
 
-router.post('/account/security/totp/disable', requireAuth, verifyCsrf, (req, res) => {
+router.post('/account/security/totp/disable', requireAuth, verifyCsrf, async (req, res) => {
   if (!verifyPassword(req.body.password || '', req.user.password_hash)) {
     return renderAccount(res, req.user, { tab: 'security', error: 'Current password is incorrect.' });
   }
-  disableTotp.run(req.user.id);
-  renderAccount(res, { ...req.user, totp_enabled: 0, totp_secret: null, totp_pending_secret: null }, { tab: 'security', notice: 'TOTP disabled. Email verification remains required at login.' });
+  await disableTotp.run(req.user.id);
+  await renderAccount(res, { ...req.user, totp_enabled: 0, totp_secret: null, totp_pending_secret: null }, { tab: 'security', notice: 'TOTP disabled. Email verification remains required at login.' });
 });
 
 router.post('/account/security/email/start', requireAuth, verifyCsrf, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   if (!validEmail(email)) return renderAccount(res, req.user, { tab: 'security', error: 'Enter a valid new email address.' });
   if (email === req.user.email.toLowerCase()) return renderAccount(res, req.user, { tab: 'security', error: 'Enter a different email address.' });
-  if (getByEmail.get(email)) return renderAccount(res, req.user, { tab: 'security', error: 'That email address is already in use.' });
+  if (await getByEmail.get(email)) return renderAccount(res, req.user, { tab: 'security', error: 'That email address is already in use.' });
   const recovery = await beginRecovery(res, req.user, 'email', email);
   if (!recovery) return renderAccount(res, req.user, { tab: 'security', error: 'Verification email is temporarily unavailable.' });
-  renderAccount(res, req.user, { tab: 'security', recovery, notice: 'A verification code was sent to your current email address.' });
+  await renderAccount(res, req.user, { tab: 'security', recovery, notice: 'A verification code was sent to your current email address.' });
 });
 
-router.post('/account/security/email/confirm', requireAuth, verifyCsrf, (req, res) => {
-  const challenge = accountRecovery(req, 'email');
+router.post('/account/security/email/confirm', requireAuth, verifyCsrf, async (req, res) => {
+  const challenge = await accountRecovery(req, 'email');
   const email = challenge && challenge.target;
   if (!challenge || req.body._recovery_csrf !== challenge.csrf_token || challenge.attempts >= 5) {
     clearRecoveryCookie(res);
     return renderAccount(res, req.user, { tab: 'security', error: 'Email verification expired. Start again.' });
   }
   if (otpHash(String(req.body.code || '').trim()) !== challenge.code_hash) {
-    incrementRecoveryAttempts.run(challenge.id);
+    await incrementRecoveryAttempts.run(challenge.id);
     return renderAccount(res, req.user, { tab: 'security', recovery: challenge, error: 'Invalid verification code.' });
   }
-  if (!validEmail(email) || (getByEmail.get(email) && getByEmail.get(email).id !== req.user.id)) {
-    deleteRecovery.run(challenge.id);
+  const existing = await getByEmail.get(email);
+  if (!validEmail(email) || (existing && existing.id !== req.user.id)) {
+    await deleteRecovery.run(challenge.id);
     clearRecoveryCookie(res);
     return renderAccount(res, req.user, { tab: 'security', error: 'That email address is no longer available.' });
   }
-  updateEmail.run(email, req.user.id);
-  deleteRecovery.run(challenge.id);
+  await updateEmail.run(email, req.user.id);
+  await deleteRecovery.run(challenge.id);
   clearRecoveryCookie(res);
-  renderAccount(res, { ...req.user, email }, { tab: 'security', notice: 'Email address updated.' });
+  await renderAccount(res, { ...req.user, email }, { tab: 'security', notice: 'Email address updated.' });
 });
 
 router.post('/account/security/password/start', requireAuth, verifyCsrf, async (req, res) => {
   const recovery = await beginRecovery(res, req.user, 'account_password');
   if (!recovery) return renderAccount(res, req.user, { tab: 'security', error: 'Verification email is temporarily unavailable.' });
-  renderAccount(res, req.user, { tab: 'security', recovery, notice: 'A verification code was sent to your current email address.' });
+  await renderAccount(res, req.user, { tab: 'security', recovery, notice: 'A verification code was sent to your current email address.' });
 });
 
-router.post('/account/security/password/confirm', requireAuth, verifyCsrf, (req, res) => {
-  const challenge = accountRecovery(req, 'account_password');
+router.post('/account/security/password/confirm', requireAuth, verifyCsrf, async (req, res) => {
+  const challenge = await accountRecovery(req, 'account_password');
   const password = req.body.new_password || '';
   if (!challenge || req.body._recovery_csrf !== challenge.csrf_token || challenge.attempts >= 5) {
     clearRecoveryCookie(res);
     return renderAccount(res, req.user, { tab: 'security', error: 'Password verification expired. Start again.' });
   }
   if (otpHash(String(req.body.code || '').trim()) !== challenge.code_hash) {
-    incrementRecoveryAttempts.run(challenge.id);
+    await incrementRecoveryAttempts.run(challenge.id);
     return renderAccount(res, req.user, { tab: 'security', recovery: challenge, error: 'Invalid verification code.' });
   }
   if (password.length < 10) return renderAccount(res, req.user, { tab: 'security', recovery: challenge, error: 'Password must be at least 10 characters.' });
-  updatePassword.run(hashPassword(password), req.user.id);
-  deleteOtherUserSessions.run(req.user.id, req.signedCookies && req.signedCookies[SESSION_COOKIE]);
-  deleteRecovery.run(challenge.id);
+  await updatePassword.run(hashPassword(password), req.user.id);
+  await deleteOtherUserSessions.run(req.user.id, req.signedCookies && req.signedCookies[SESSION_COOKIE]);
+  await deleteRecovery.run(challenge.id);
   clearRecoveryCookie(res);
-  renderAccount(res, req.user, { tab: 'security', notice: 'Password updated.' });
+  await renderAccount(res, req.user, { tab: 'security', notice: 'Password updated.' });
 });
 
 // --- Account deletion ------------------------------------------------------
@@ -796,7 +803,7 @@ router.post('/account/security/delete/start', requireAuth, widgetPage, verifyCsr
 
 router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiters.login, async (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
-  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  const challenge = challengeId && await getChallenge.get(challengeId, Date.now());
 
   // Validate the deletion challenge.
   if (
@@ -807,11 +814,11 @@ router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiter
     req.body._twofa_csrf !== challenge.csrf_token
   ) {
     clearTwofaCookie(res);
-    if (challenge) deleteChallenge.run(challenge.id);
+    if (challenge) await deleteChallenge.run(challenge.id);
     return renderAccount(res, req.user, { tab: 'security', error: 'Deletion verification expired. Please start again.' });
   }
 
-  const user = getUserById.get(req.user.id);
+  const user = await getUserById.get(req.user.id);
   let valid = false;
   let totpCounter = null;
   if (user && challenge.method === 'email') valid = otpHash(req.body.code || '') === challenge.code_hash;
@@ -821,7 +828,7 @@ router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiter
   }
 
   if (!valid) {
-    incrementChallengeAttempts.run(challenge.id);
+    await incrementChallengeAttempts.run(challenge.id);
     return renderAccount(res, req.user, {
       tab: 'security',
       deleteChallenge: { csrf: challenge.csrf_token, method: challenge.method },
@@ -836,35 +843,35 @@ router.post('/account/security/delete/confirm', requireAuth, verifyCsrf, limiter
   try {
     // Recorded before the delete: the transaction nulls actor_id but keeps the
     // actor name, and a row inserted afterwards would violate the foreign key.
-    audit.record(req.user, 'delete_own_account', `${req.user.username} <${req.user.email}> (#${req.user.id})`);
+    await audit.record(req.user, 'delete_own_account', `${req.user.username} <${req.user.email}> (#${req.user.id})`);
     await deleteUserAccount(req.user);
   } catch (err) {
-    audit.record(req.user, 'delete_own_account_failed', (err && err.message) ? err.message : 'unknown error');
+    await audit.record(req.user, 'delete_own_account_failed', (err && err.message) ? err.message : 'unknown error');
     clearTwofaCookie(res);
-    try { deleteChallenge.run(challenge.id); } catch {}
+    try { await deleteChallenge.run(challenge.id); } catch {}
     return renderAccount(res, req.user, { tab: 'security', error: 'Account deletion failed. Please try again, and contact the administrator if this continues.' });
   }
 
   // The challenge, sessions and TOTP state cascaded away with the user row, so
   // only the browser-side cookies are left to clear.
   clearTwofaCookie(res);
-  destroySession(req, res);
+  await destroySession(req, res);
   return res.redirect('/?deleted=1');
 });
 
-router.post('/account/security/delete/cancel', requireAuth, verifyCsrf, (req, res) => {
+router.post('/account/security/delete/cancel', requireAuth, verifyCsrf, async (req, res) => {
   const challengeId = req.signedCookies && req.signedCookies.twofa;
-  const challenge = challengeId && getChallenge.get(challengeId, Date.now());
+  const challenge = challengeId && await getChallenge.get(challengeId, Date.now());
   if (challenge && challenge.purpose === 'account_delete' && challenge.user_id === req.user.id) {
-    deleteChallenge.run(challenge.id);
+    await deleteChallenge.run(challenge.id);
   }
   clearTwofaCookie(res);
   renderAccount(res, req.user, { tab: 'security', notice: 'Account deletion cancelled.' });
 });
 
 // --- Log out --------------------------------------------------------------
-router.post('/logout', verifyCsrf, (req, res) => {
-  destroySession(req, res);
+router.post('/logout', verifyCsrf, async (req, res) => {
+  await destroySession(req, res);
   res.redirect('/');
 });
 

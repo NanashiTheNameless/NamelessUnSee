@@ -390,15 +390,15 @@ test('admin: seed via DB, ban (view) blocks service-wide, audit recorded', async
   assert.ok(/198\.51\.100\.5/.test(adm2), 'ban listed');
 });
 
-test('bans: expired ban is not enforced and gets swept', () => {
+test('bans: expired ban is not enforced and gets swept', async () => {
   const past = Date.now() - 1000;
   db.prepare(
     `INSERT INTO bans (kind, value, block_account, block_view, reason, created_at, expires_at)
      VALUES ('ip', '203.0.113.200', 0, 1, 'expired', ?, ?)`
   ).run(past, past);
-  bans.reload();
-  assert.ok(!bans.isViewBannedIp('203.0.113.200'), 'expired ban not enforced');
-  const removed = bans.sweepExpired();
+  await bans.reload();
+  assert.ok(!(await bans.isViewBannedIp('203.0.113.200')), 'expired ban not enforced');
+  const removed = await bans.sweepExpired();
   assert.ok(removed >= 1, 'sweep removed the expired ban');
 });
 

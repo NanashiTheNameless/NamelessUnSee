@@ -1,6 +1,6 @@
 'use strict';
 
-const db = require('./db');
+const { getDatabase } = require('./db-runtime');
 const config = require('./config');
 const bans = require('./bans');
 const { randomToken } = require('./util/crypto');
@@ -8,21 +8,11 @@ const { randomToken } = require('./util/crypto');
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const SESSION_COOKIE = 'sid';
 
-const insertSession = db.prepare(
-  'INSERT INTO sessions (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
-);
-const getSession = db.prepare('SELECT * FROM sessions WHERE id = ? AND expires_at > ?');
-const deleteSession = db.prepare('DELETE FROM sessions WHERE id = ?');
-const getUserById = db.prepare('SELECT * FROM users WHERE id = ?');
-const purgeExpired = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
-const purgeLoginChallenges = db.prepare('DELETE FROM login_challenges WHERE expires_at <= ?');
-const purgeRecoveryChallenges = db.prepare('DELETE FROM recovery_challenges WHERE expires_at <= ?');
-
-function createSession(res, userId) {
+async function createSession(res, userId) {
   const id = randomToken(32);
   const csrf = randomToken(24);
   const now = Date.now();
-  insertSession.run(id, userId, csrf, now, now + SESSION_TTL_MS);
+  await (await getDatabase()).run('INSERT INTO sessions (id, user_id, csrf_token, created_at, expires_at) VALUES (?, ?, ?, ?, ?)', [id, userId, csrf, now, now + SESSION_TTL_MS]);
   res.cookie(SESSION_COOKIE, id, {
     httpOnly: true,
     sameSite: 'lax',
@@ -34,29 +24,30 @@ function createSession(res, userId) {
   return csrf;
 }
 
-function destroySession(req, res) {
+async function destroySession(req, res) {
   const id = req.signedCookies && req.signedCookies[SESSION_COOKIE];
-  if (id) deleteSession.run(id);
+  if (id) await (await getDatabase()).run('DELETE FROM sessions WHERE id = ?', [id]);
   res.clearCookie(SESSION_COOKIE, { path: '/' });
 }
 
 // Attach req.user / req.session for every request (cheap; no logging side effects).
-function attachUser(req, res, next) {
+async function attachUser(req, res, next) {
   req.user = null;
   req.session = null;
   const id = req.signedCookies && req.signedCookies[SESSION_COOKIE];
   if (id) {
-    const sess = getSession.get(id, Date.now());
+    const db = await getDatabase();
+    const sess = await db.get('SELECT * FROM sessions WHERE id = ? AND expires_at > ?', [id, Date.now()]);
     if (sess) {
-      const user = getUserById.get(sess.user_id);
+      const user = await db.get('SELECT * FROM users WHERE id = ?', [sess.user_id]);
       const accountBanned =
-        user && (bans.userBan(user.id).account || bans.emailBan(user.email).account);
+        user && ((await bans.userBan(user.id)).account || (await bans.emailBan(user.email)).account);
       if (user && user.status === 'approved' && !accountBanned) {
         req.user = user;
         req.session = sess;
       } else if (accountBanned) {
         // Revoke a banned account's session immediately.
-        deleteSession.run(id);
+        await db.run('DELETE FROM sessions WHERE id = ?', [id]);
         res.clearCookie(SESSION_COOKIE, { path: '/' });
       }
     }
@@ -91,10 +82,13 @@ function verifyCsrf(req, res, next) {
   next();
 }
 
-function sweepSessions() {
-  purgeExpired.run(Date.now());
-  purgeLoginChallenges.run(Date.now());
-  purgeRecoveryChallenges.run(Date.now());
+async function sweepSessions() {
+  const db = await getDatabase();
+  await db.batch([
+    { sql: 'DELETE FROM sessions WHERE expires_at <= ?', args: [Date.now()] },
+    { sql: 'DELETE FROM login_challenges WHERE expires_at <= ?', args: [Date.now()] },
+    { sql: 'DELETE FROM recovery_challenges WHERE expires_at <= ?', args: [Date.now()] },
+  ]);
 }
 
 module.exports = {

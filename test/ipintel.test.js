@@ -111,7 +111,7 @@ test('a refused gallery hit fans out to its images, but stays bounded', async ()
   assert.ok(profiled.every((r) => r.attempts === 2), 'the beacon is not counted as another attempt');
 });
 
-test('blocked attempts are capped per image so a scan cannot grow the log forever', () => {
+test('blocked attempts are capped per image so a scan cannot grow the log forever', async () => {
   const imageId = seedImage('prunetarget');
   const insert = db.prepare(
     `INSERT INTO access_logs (image_id, view_id, viewed_at, ip, blocked_reason, attempts)
@@ -124,7 +124,7 @@ test('blocked attempts are capped per image so a scan cannot grow the log foreve
     `INSERT INTO access_logs (image_id, view_id, viewed_at, ip, blocked_reason) VALUES (?, 'servedviewid', ?, ?, NULL)`
   ).run(imageId, base, '198.51.100.7');
 
-  const removed = logging.pruneBlockedLogs();
+  const removed = await logging.pruneBlockedLogs();
   assert.equal(removed, 60, 'only the overflow is dropped');
 
   const rows = db.prepare('SELECT * FROM access_logs WHERE image_id = ? ORDER BY viewed_at').all(imageId);

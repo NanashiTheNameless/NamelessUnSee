@@ -1,35 +1,30 @@
 'use strict';
 
-const db = require('./db');
+const { getDatabase } = require('./db-runtime');
 const config = require('./config');
 const phash = require('./util/phash');
 const nsfw = require('./nsfw');
 
 // --- perceptual-hash blocklist (self-managed) ------------------------------
-const insertHash = db.prepare(
-  'INSERT INTO phash_blocklist (phash, label, added_by, created_at) VALUES (?, ?, ?, ?)'
-);
-const allHashes = db.prepare('SELECT * FROM phash_blocklist ORDER BY created_at DESC');
-const delHash = db.prepare('DELETE FROM phash_blocklist WHERE id = ?');
-
-function addBlockHash(hash, label, addedBy) {
-  insertHash.run(hash, label || null, addedBy || null, Date.now());
+async function addBlockHash(hash, label, addedBy) {
+  await (await getDatabase()).run('INSERT INTO phash_blocklist (phash, label, added_by, created_at) VALUES (?, ?, ?, ?)', [hash, label || null, addedBy || null, Date.now()]);
 }
-function listBlockHashes() {
-  return allHashes.all();
+async function listBlockHashes() {
+  return (await getDatabase()).all('SELECT * FROM phash_blocklist ORDER BY created_at DESC');
 }
-function removeBlockHash(id) {
-  delHash.run(id);
+async function removeBlockHash(id) {
+  return (await getDatabase()).run('DELETE FROM phash_blocklist WHERE id = ?', [id]);
 }
 
 // Nearest blocklist entry within the configured threshold, or null. The
 // blocklist can hold both hash formats: 64-hex PDQ entries (current) and
 // 16-hex pHash entries. Each entry is compared against the
 // matching hash for its format, with its format's threshold.
-function blocklistMatch(hashes) {
+async function blocklistMatch(hashes) {
   if (!hashes || (!hashes.pdq && !hashes.legacy)) return null;
+  const rows = await listBlockHashes();
   let best = null;
-  for (const row of allHashes.all()) {
+  for (const row of rows) {
     const isPdq = typeof row.phash === 'string' && row.phash.length === 64;
     const candidate = isPdq ? hashes.pdq : hashes.legacy;
     const th = isPdq ? config.moderation.pdqThreshold : config.moderation.phashThreshold;
@@ -78,7 +73,7 @@ async function scan(imagePath) {
   }
 
   // Tier A (precise): self-managed blocklist + provider known-hash match.
-  const hit = blocklistMatch({ pdq: hash, legacy: legacyHash });
+  const hit = await blocklistMatch({ pdq: hash, legacy: legacyHash });
   if (hit) {
     return { status: 'quarantined', reason: `phash-blocklist (d=${hit.distance})`, score: null, phash: hash };
   }

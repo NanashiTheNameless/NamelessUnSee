@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const { requireAuth, verifyCsrf } = require('../auth');
 const { limiters } = require('../ratelimit');
@@ -20,33 +20,38 @@ const router = express.Router();
 const BLOCKED_LOG_CAP = 10;
 
 // --- DB queries --------------------------------------------------------------
-const listMine = db.prepare(
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  all: (...args) => getDatabase().then((db) => db.prepare(sql).all(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const listMine = statement(
   `SELECT g.*, (SELECT COUNT(*) FROM gallery_items gi WHERE gi.gallery_id = g.id) AS item_count
    FROM galleries g
    WHERE g.owner_id = ? AND g.deleted_at IS NULL
    ORDER BY g.created_at DESC`
 );
 
-const getMineByToken = db.prepare(
+const getMineByToken = statement(
   'SELECT * FROM galleries WHERE token = ? AND owner_id = ? AND deleted_at IS NULL'
 );
 
-const insertGallery = db.prepare(
+const insertGallery = statement(
   'INSERT INTO galleries (token, owner_id, title, created_at) VALUES (?, ?, ?, ?)'
 );
 
-const softDeleteGallery = db.prepare(
+const softDeleteGallery = statement(
   'UPDATE galleries SET deleted_at = ? WHERE id = ? AND owner_id = ?'
 );
 
-const clearItems = db.prepare('DELETE FROM gallery_items WHERE gallery_id = ?');
-const addItem = db.prepare(
+const clearItems = statement('DELETE FROM gallery_items WHERE gallery_id = ?');
+const addItem = statement(
   'INSERT OR IGNORE INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)'
 );
 
-const getGalleryLive = db.prepare('SELECT * FROM galleries WHERE token = ? AND deleted_at IS NULL');
+const getGalleryLive = statement('SELECT * FROM galleries WHERE token = ? AND deleted_at IS NULL');
 
-const listGalleryItems = db.prepare(
+const listGalleryItems = statement(
   `SELECT i.*
    FROM gallery_items gi
    JOIN images i ON i.id = gi.image_id
@@ -57,7 +62,7 @@ const listGalleryItems = db.prepare(
 );
 
 // For building selection UIs.
-const listMineImages = db.prepare(
+const listMineImages = statement(
   'SELECT id, token, title, mime, width, height, created_at FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY created_at DESC'
 );
 const getMineImagesByTokensSql =
@@ -86,17 +91,17 @@ function isViewable(img) {
 }
 
 // --- Dashboard: list + create ----------------------------------------------
-router.get('/dashboard/galleries', requireAuth, (req, res) => {
+router.get('/dashboard/galleries', requireAuth, async (req, res) => {
   res.render('galleries', {
     me: req.user,
-    galleries: listMine.all(req.user.id),
-    images: listMineImages.all(req.user.id),
+    galleries: await listMine.all(req.user.id),
+    images: await listMineImages.all(req.user.id),
     baseUrl: config.baseUrl,
     created: req.query.created === '1',
   });
 });
 
-router.post('/dashboard/galleries', requireAuth, verifyCsrf, (req, res) => {
+router.post('/dashboard/galleries', requireAuth, verifyCsrf, async (req, res) => {
   const title = String(req.body.title || '').trim().slice(0, 200) || null;
   const raw = req.body.images;
   const tokens = Array.isArray(raw) ? raw : (raw ? [raw] : []);
@@ -106,28 +111,27 @@ router.post('/dashboard/galleries', requireAuth, verifyCsrf, (req, res) => {
   }
 
   const placeholders = cleaned.map(() => '?').join(',');
-  const stmt = db.prepare(getMineImagesByTokensSql.replace('%TOKENS%', placeholders));
-  const rows = stmt.all(req.user.id, ...cleaned);
+  const rows = await statement(getMineImagesByTokensSql.replace('%TOKENS%', placeholders)).all(req.user.id, ...cleaned);
   if (!rows.length) {
     return res.status(400).render('error', { title: 'Invalid gallery', message: 'No selected images were found.' });
   }
 
   const now = Date.now();
   const token = uuidv7(now);
-  const info = insertGallery.run(token, req.user.id, title, now);
+  const info = await insertGallery.run(token, req.user.id, title, now);
   const galleryId = info.lastInsertRowid;
   for (let i = 0; i < rows.length; i++) {
-    addItem.run(galleryId, rows[i].id, i + 1, now);
+    await addItem.run(galleryId, rows[i].id, i + 1, now);
   }
   res.redirect('/dashboard/galleries?created=1');
 });
 
 // --- Dashboard: edit items --------------------------------------------------
-router.get('/dashboard/g/:token', requireAuth, (req, res) => {
-  const g = getMineByToken.get(req.params.token, req.user.id);
+router.get('/dashboard/g/:token', requireAuth, async (req, res) => {
+  const g = await getMineByToken.get(req.params.token, req.user.id);
   if (!g) return res.status(404).render('error', { title: 'Not found', message: 'No such gallery.' });
-  const items = listGalleryItems.all(g.id, Date.now());
-  const images = listMineImages.all(req.user.id);
+  const items = await listGalleryItems.all(g.id, Date.now());
+  const images = await listMineImages.all(req.user.id);
   const selected = new Set(items.map((i) => i.id));
   res.render('gallery-edit', {
     me: req.user,
@@ -140,8 +144,8 @@ router.get('/dashboard/g/:token', requireAuth, (req, res) => {
   });
 });
 
-router.post('/dashboard/g/:token', requireAuth, verifyCsrf, (req, res) => {
-  const g = getMineByToken.get(req.params.token, req.user.id);
+router.post('/dashboard/g/:token', requireAuth, verifyCsrf, async (req, res) => {
+  const g = await getMineByToken.get(req.params.token, req.user.id);
   if (!g) return res.status(404).render('error', { title: 'Not found', message: 'No such gallery.' });
 
   const raw = req.body.images;
@@ -152,43 +156,42 @@ router.post('/dashboard/g/:token', requireAuth, verifyCsrf, (req, res) => {
   }
 
   const placeholders = cleaned.map(() => '?').join(',');
-  const stmt = db.prepare(getMineImagesByTokensSql.replace('%TOKENS%', placeholders));
-  const rows = stmt.all(req.user.id, ...cleaned);
+  const rows = await statement(getMineImagesByTokensSql.replace('%TOKENS%', placeholders)).all(req.user.id, ...cleaned);
   if (!rows.length) {
     return res.status(400).render('error', { title: 'Invalid gallery', message: 'No selected images were found.' });
   }
 
   const now = Date.now();
-  const tx = db.transaction(() => {
-    clearItems.run(g.id);
-    for (let i = 0; i < rows.length; i++) addItem.run(g.id, rows[i].id, i + 1, now);
-  });
-  tx();
+  const db = await getDatabase();
+  await db.batch([
+    { sql: 'DELETE FROM gallery_items WHERE gallery_id = ?', args: [g.id] },
+    ...rows.map((row, i) => ({ sql: 'INSERT OR IGNORE INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)', args: [g.id, row.id, i + 1, now] })),
+  ]);
   res.redirect(`/dashboard/g/${encodeURIComponent(g.token)}?saved=1`);
 });
 
-router.post('/dashboard/g/:token/delete', requireAuth, verifyCsrf, (req, res) => {
-  const g = getMineByToken.get(req.params.token, req.user.id);
-  if (g) softDeleteGallery.run(Date.now(), g.id, req.user.id);
+router.post('/dashboard/g/:token/delete', requireAuth, verifyCsrf, async (req, res) => {
+  const g = await getMineByToken.get(req.params.token, req.user.id);
+  if (g) await softDeleteGallery.run(Date.now(), g.id, req.user.id);
   res.redirect('/dashboard/galleries');
 });
 
 // --- Public view ------------------------------------------------------------
 router.get('/g/:token', limiters.view, requireConsent, withScriptNonce, async (req, res) => {
-  const g = getGalleryLive.get(req.params.token);
+  const g = await getGalleryLive.get(req.params.token);
   if (!g) return res.status(404).render('view-gone', { expired: false });
 
-  const items = listGalleryItems.all(g.id, Date.now()).filter(isViewable);
+  const items = (await listGalleryItems.all(g.id, Date.now())).filter(isViewable);
 
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
     // A gallery link grants access to every image in it, so a refused attempt
     // belongs in each image's own access log (bounded, and deduped per IP).
-    items.slice(0, BLOCKED_LOG_CAP).forEach((item, i) => {
+    for (const [i, item] of items.slice(0, BLOCKED_LOG_CAP).entries()) {
       try {
-        logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0 });
+        await logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0 });
       } catch { /* non-fatal */ }
-    });
+    }
     res.status(403);
     return res.render('view-blocked', {
       reason: assessment.reason,
@@ -218,19 +221,19 @@ router.get('/g/:token', limiters.view, requireConsent, withScriptNonce, async (r
 // allowed viewer is redirected into the per-image view flow, which has its own
 // beacon. The details merge into the refused-attempt rows the block wrote.
 router.post('/g/:token/telemetry', limiters.telemetry, requireConsent, async (req, res) => {
-  const g = getGalleryLive.get(req.params.token);
+  const g = await getGalleryLive.get(req.params.token);
   if (!g) return res.status(204).end();
 
   const assessment = await ipintel.assess(req);
   if (assessment.allowed) return res.status(204).end();
 
   const client = clientTelemetry.sanitize(req.body && req.body.client);
-  const items = listGalleryItems.all(g.id, Date.now()).filter(isViewable);
-  items.slice(0, BLOCKED_LOG_CAP).forEach((item, i) => {
+  const items = (await listGalleryItems.all(g.id, Date.now())).filter(isViewable);
+  for (const [i, item] of items.slice(0, BLOCKED_LOG_CAP).entries()) {
     try {
-      logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0, client });
+      await logging.logBlocked(req, item.id, assessment, `gallery ${g.token}`, { withHeaders: i === 0, client });
     } catch { /* non-fatal */ }
-  });
+  }
   res.status(204).end();
 });
 

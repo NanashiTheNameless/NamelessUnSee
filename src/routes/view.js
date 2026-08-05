@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const express = require('express');
-const db = require('../db');
+const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const watermark = require('../watermark');
 const logging = require('../logging');
@@ -16,30 +16,34 @@ const storage = require('../storage');
 
 const router = express.Router();
 
-const getLive = db.prepare('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
+const statement = (sql) => ({
+  get: (...args) => getDatabase().then((db) => db.prepare(sql).get(...args)),
+  run: (...args) => getDatabase().then((db) => db.prepare(sql).run(...args)),
+});
+const getLive = statement('SELECT * FROM images WHERE token = ? AND deleted_at IS NULL');
 // A row with a non-null ip means a render already happened for this view id
 // (the telemetry beacon also upserts the row, but never sets ip; blocked
 // attempts set ip but are never a served view).
-const getExistingView = db.prepare(
+const getExistingView = statement(
   'SELECT 1 AS seen FROM access_logs WHERE image_id = ? AND view_id = ? AND ip IS NOT NULL AND blocked_reason IS NULL'
 );
-const startTimer = db.prepare(
+const startTimer = statement(
   'UPDATE images SET first_viewed_at = ?, expires_at = ? WHERE id = ? AND first_viewed_at IS NULL'
 );
-const bumpViews = db.prepare('UPDATE images SET view_count = view_count + 1 WHERE id = ? RETURNING view_count, max_views');
-const softDeleteImg = db.prepare('UPDATE images SET deleted_at = ? WHERE id = ?');
+const bumpViews = statement('UPDATE images SET view_count = view_count + 1 WHERE id = ? RETURNING view_count, max_views');
+const softDeleteImg = statement('UPDATE images SET deleted_at = ? WHERE id = ?');
 const VIEW_GATE_COOKIE = 'view_gate';
 
 // Start the retention timer on first view (if configured that way) and count
 // the view, deleting the image once max_views is reached.
-function accountView(img) {
+async function accountView(img) {
   const now = Date.now();
   if (img.timer_start === 'first_view' && img.ttl_seconds && !img.first_viewed_at) {
-    startTimer.run(now, now + img.ttl_seconds * 1000, img.id);
+    await startTimer.run(now, now + img.ttl_seconds * 1000, img.id);
   }
-  const row = bumpViews.get(img.id);
+  const row = await bumpViews.get(img.id);
   if (row && row.max_views && row.view_count >= row.max_views) {
-    softDeleteImg.run(now, img.id);
+    await softDeleteImg.run(now, img.id);
     storage.remove(img).catch(() => {});
   }
 }
@@ -64,8 +68,8 @@ function isViewable(img) {
   return false; // quarantined / rejected / held-for-review
 }
 
-function loadImage(req, res) {
-  const img = getLive.get(req.imageToken || req.params.token);
+async function loadImage(req, res) {
+  const img = await getLive.get(req.imageToken || req.params.token);
   if (!img) {
     res.status(404);
     return null;
@@ -90,13 +94,13 @@ function sanitizeViewId(v) {
 }
 
 // --- per-recipient links ----------------------------------------------------
-const getLink = db.prepare('SELECT * FROM view_links WHERE token = ? AND image_id = ?');
-const getLinkImage = db.prepare(
+const getLink = statement('SELECT * FROM view_links WHERE token = ? AND image_id = ?');
+const getLinkImage = statement(
   `SELECT vl.*, i.token AS image_token
    FROM view_links vl JOIN images i ON i.id = vl.image_id
    WHERE vl.token = ?`
 );
-const consumeLink = db.prepare(
+const consumeLink = statement(
   `UPDATE view_links SET use_count = use_count + 1
    WHERE id = ? AND revoked_at IS NULL AND (max_uses IS NULL OR use_count < max_uses)`
 );
@@ -107,7 +111,7 @@ const consumeLink = db.prepare(
 //   { link, exhausted: true }       valid but its uses are spent- still fine
 //                                   for replays of an already-counted view
 //   { link }                        valid and usable
-function resolveLink(req, img) {
+async function resolveLink(req, img) {
   if (req.recipientLink) {
     if (req.recipientLink.image_id !== img.id || req.recipientLink.revoked_at) return { invalid: true };
     if (req.recipientLink.max_uses && req.recipientLink.use_count >= req.recipientLink.max_uses) {
@@ -118,15 +122,15 @@ function resolveLink(req, img) {
   const raw = req.query.r !== undefined ? req.query.r : (req.body && req.body.r);
   if (raw === undefined || raw === '') return { link: null };
   if (typeof raw !== 'string' || !/^[A-Za-z0-9_-]{10,64}$/.test(raw)) return { invalid: true };
-  const link = getLink.get(raw, img.id);
+  const link = await getLink.get(raw, img.id);
   if (!link || link.revoked_at) return { invalid: true };
   if (link.max_uses && link.use_count >= link.max_uses) return { link, exhausted: true };
   return { link };
 }
 
 // Recipient URLs intentionally contain only the recipient token.
-router.use('/r/:token', (req, res, next) => {
-  const link = getLinkImage.get(req.params.token);
+router.use('/r/:token', async (req, res, next) => {
+  const link = await getLinkImage.get(req.params.token);
   if (!link || link.revoked_at) return linkGone(res);
   req.recipientLink = link;
   req.imageToken = link.image_token;
@@ -160,18 +164,18 @@ function blockMessage(reason) {
 
 // --- Consent-gated view page ---------------------------------------------
 router.get(['/i/:token', '/r/:token'], limiters.view, requireConsent, withScriptNonce, async (req, res) => {
-  const img = loadImage(req, res);
+  const img = await loadImage(req, res);
   if (!img) {
     return res.render('view-gone', { expired: !!res.locals._expired });
   }
 
-  const { link, invalid, exhausted } = resolveLink(req, img);
+  const { link, invalid, exhausted } = await resolveLink(req, img);
   if (invalid || exhausted) return linkGone(res);
 
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
     // A refused viewer is still forensic signal for the owner: log the attempt.
-    try { logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
+    try { await logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
     res.status(403);
     const publicPath = req.publicToken
       ? `/r/${encodeURIComponent(req.publicToken)}`
@@ -201,10 +205,10 @@ router.get(['/i/:token', '/r/:token'], limiters.view, requireConsent, withScript
   });
 });
 
-router.post(['/i/:token/view-check', '/r/:token/view-check'], limiters.view, requireConsent, (req, res) => {
-  const img = loadImage(req, res);
+router.post(['/i/:token/view-check', '/r/:token/view-check'], limiters.view, requireConsent, async (req, res) => {
+  const img = await loadImage(req, res);
   if (!img) return res.status(res.statusCode === 410 ? 410 : 404).end();
-  const { link, invalid, exhausted } = resolveLink(req, img);
+  const { link, invalid, exhausted } = await resolveLink(req, img);
   if (invalid || exhausted) return linkGone(res);
   if (!verifySolution(req.body && req.body.altcha)) return res.status(400).type('text').send('The bot check did not pass. Please go back and try again.');
   res.cookie(VIEW_GATE_COOKIE, img.token, {
@@ -222,19 +226,19 @@ router.post(['/i/:token/view-check', '/r/:token/view-check'], limiters.view, req
 
 // --- Per-viewer watermarked render (the ONLY image bytes ever served) ------
 router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.png', '/r/:token/render.mp4'], limiters.render, requireConsent, async (req, res) => {
-  const img = loadImage(req, res);
+  const img = await loadImage(req, res);
   if (!img) return res.status(res.statusCode === 410 ? 410 : 404).end();
   if (!req.signedCookies || req.signedCookies[VIEW_GATE_COOKIE] !== img.token) {
     return res.status(403).type('text').send('Complete the bot check before viewing this image.');
   }
-  const { link, invalid, exhausted } = resolveLink(req, img);
+  const { link, invalid, exhausted } = await resolveLink(req, img);
   if (invalid) return res.status(410).type('text').send('This share link has been used up or revoked.');
 
   // Assess the viewer. If we cannot fully identify them, or they are behind a
   // VPN/proxy/Tor, refuse to render the image.
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
-    try { logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
+    try { await logging.logBlocked(req, img.id, assessment, linkLabelOf(link)); } catch { /* non-fatal */ }
     return res.status(403).type('text').send(blockMessage(assessment.reason));
   }
 
@@ -242,12 +246,12 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
   // Replays and seeks re-request the media with the same per-page view id;
   // only the first render of a view id counts against limits. An exhausted
   // link may still replay a view it already paid for- never start a new one.
-  const isReplay = !!(viewId && getExistingView.get(img.id, viewId));
+  const isReplay = !!(viewId && await getExistingView.get(img.id, viewId));
   if (exhausted && !isReplay) return res.status(410).type('text').send('This share link has been used up or revoked.');
   const linkLabel = linkLabelOf(link);
   let identity;
   try {
-    identity = logging.logRender(req, img.id, viewId, assessment, linkLabel);
+    identity = await logging.logRender(req, img.id, viewId, assessment, linkLabel);
   } catch {
     identity = {
       ip: assessment.ip,
@@ -300,7 +304,7 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
   // Consume the recipient link only after a successful render, atomically- if
   // two requests race a one-time link, exactly one gets the bytes. Replays of
   // an already-counted view (same view id) don't consume another use.
-  if (link && !isReplay && consumeLink.run(link.id).changes === 0) {
+  if (link && !isReplay && (await consumeLink.run(link.id)).changes === 0) {
     if (renderedVideo) fs.unlink(renderedVideo, () => {});
     return res.status(410).type('text').send('This share link has been used up or revoked.');
   }
@@ -308,7 +312,7 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
   // Count this view: start the first-view timer if needed and enforce
   // max_views. Replays within the same page load don't count again.
   try {
-    if (!isReplay) accountView(img);
+    if (!isReplay) await accountView(img);
   } catch { /* non-fatal */ }
 
   // Never cache: every delivery is a fresh, per-viewer watermarked render.
@@ -331,7 +335,7 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
 
 // --- Client-side telemetry beacon -----------------------------------------
 router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, requireConsent, async (req, res) => {
-  const img = getLive.get(req.imageToken || req.params.token);
+  const img = await getLive.get(req.imageToken || req.params.token);
   if (!img) return res.status(204).end();
 
   const client = clientTelemetry.sanitize(req.body && req.body.client);
@@ -341,7 +345,7 @@ router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, 
   // required on this path because a blocked viewer never reaches the bot check.
   const assessment = await ipintel.assess(req);
   if (!assessment.allowed) {
-    try { logging.logBlocked(req, img.id, assessment, null, { client }); } catch { /* non-fatal */ }
+    try { await logging.logBlocked(req, img.id, assessment, null, { client }); } catch { /* non-fatal */ }
     return res.status(204).end();
   }
 
@@ -353,7 +357,7 @@ router.post(['/i/:token/telemetry', '/r/:token/telemetry'], limiters.telemetry, 
   if (!viewId) return res.status(204).end();
 
   try {
-    logging.logClient(img.id, viewId, client);
+    await logging.logClient(img.id, viewId, client);
   } catch { /* best-effort */ }
   res.status(204).end();
 });

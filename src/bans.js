@@ -1,134 +1,112 @@
 'use strict';
 
-const db = require('./db');
+const { getDatabase } = require('./db-runtime');
 const { parseIp, normalizeIp, RangeSet } = require('./util/ip');
 
-const insert = db.prepare(
-  `INSERT INTO bans (kind, value, block_account, block_view, reason, created_at, created_by, expires_at)
-   VALUES (@kind, @value, @block_account, @block_view, @reason, @created_at, @created_by, @expires_at)`
-);
-const del = db.prepare('DELETE FROM bans WHERE id = ?');
-const delWhere = db.prepare('DELETE FROM bans WHERE kind = ? AND value = ?');
-const delExpired = db.prepare('DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= ?');
-const all = db.prepare('SELECT * FROM bans ORDER BY created_at DESC');
-
-// In-memory indexes, rebuilt whenever bans change.
 const idx = {
-  viewExact: new Set(),
-  viewRanges: new RangeSet().finalize(),
-  acctExact: new Set(),
-  acctRanges: new RangeSet().finalize(),
-  emails: new Map(), // email -> { account, view }
-  users: new Map(), // userId(string) -> { account, view }
+  viewExact: new Set(), viewRanges: new RangeSet().finalize(),
+  acctExact: new Set(), acctRanges: new RangeSet().finalize(),
+  emails: new Map(), users: new Map(),
 };
+let loaded;
 
-function load() {
-  const viewExact = new Set();
-  const acctExact = new Set();
-  const viewRanges = new RangeSet();
-  const acctRanges = new RangeSet();
-  const emails = new Map();
-  const users = new Map();
-
+function applyRows(rows) {
+  const viewExact = new Set(), acctExact = new Set();
+  const viewRanges = new RangeSet(), acctRanges = new RangeSet();
+  const emails = new Map(), users = new Map();
   const now = Date.now();
-  for (const b of all.all()) {
-    if (b.expires_at && b.expires_at <= now) continue; // expired: don't index
-    const acct = !!b.block_account;
-    const view = !!b.block_view;
+  for (const b of rows) {
+    if (b.expires_at && b.expires_at <= now) continue;
+    const acct = !!b.block_account, view = !!b.block_view;
     if (b.kind === 'ip') {
-      const val = b.value.trim();
-      if (val.includes('/')) {
-        if (view) viewRanges.addCidr(val);
-        if (acct) acctRanges.addCidr(val);
+      const value = b.value.trim();
+      if (value.includes('/')) {
+        if (view) viewRanges.addCidr(value);
+        if (acct) acctRanges.addCidr(value);
       } else {
-        const norm = normalizeIp(val) || val;
+        const norm = normalizeIp(value) || value;
         if (view) viewExact.add(norm);
         if (acct) acctExact.add(norm);
       }
     } else if (b.kind === 'email') {
-      const e = b.value.trim().toLowerCase();
-      const prev = emails.get(e) || { account: false, view: false };
-      emails.set(e, { account: prev.account || acct, view: prev.view || view });
+      const key = b.value.trim().toLowerCase();
+      const prev = emails.get(key) || { account: false, view: false };
+      emails.set(key, { account: prev.account || acct, view: prev.view || view });
     } else if (b.kind === 'user') {
-      const u = String(b.value);
-      const prev = users.get(u) || { account: false, view: false };
-      users.set(u, { account: prev.account || acct, view: prev.view || view });
+      const key = String(b.value);
+      const prev = users.get(key) || { account: false, view: false };
+      users.set(key, { account: prev.account || acct, view: prev.view || view });
     }
   }
+  idx.viewExact = viewExact; idx.acctExact = acctExact;
+  idx.viewRanges = viewRanges.finalize(); idx.acctRanges = acctRanges.finalize();
+  idx.emails = emails; idx.users = users;
+}
 
-  idx.viewExact = viewExact;
-  idx.acctExact = acctExact;
-  idx.viewRanges = viewRanges.finalize();
-  idx.acctRanges = acctRanges.finalize();
-  idx.emails = emails;
-  idx.users = users;
+async function load() {
+  if (!loaded) {
+    loaded = (async () => {
+      const db = await getDatabase();
+      const rows = await db.all('SELECT * FROM bans ORDER BY created_at DESC');
+      applyRows(rows);
+    })().catch((error) => { loaded = undefined; throw error; });
+  }
+  return loaded;
 }
 
 function ipMatches(ip, exact, ranges) {
   if (!ip) return false;
   const norm = normalizeIp(ip);
   if (norm && exact.has(norm)) return true;
-  const p = parseIp(ip);
-  if (p && p.version === 4 && ranges.size && ranges.contains(p.value)) return true;
-  return false;
+  const parsed = parseIp(ip);
+  return !!(parsed && parsed.version === 4 && ranges.size && ranges.contains(parsed.value));
 }
 
-function isViewBannedIp(ip) {
-  return ipMatches(ip, idx.viewExact, idx.viewRanges);
-}
-function isAccountBannedIp(ip) {
-  return ipMatches(ip, idx.acctExact, idx.acctRanges);
-}
-function emailBan(email) {
-  return idx.emails.get(String(email || '').trim().toLowerCase()) || { account: false, view: false };
-}
-function userBan(userId) {
-  return idx.users.get(String(userId)) || { account: false, view: false };
-}
+function isViewBannedIp(ip) { return load().then(() => ipMatches(ip, idx.viewExact, idx.viewRanges)); }
+function isAccountBannedIp(ip) { return load().then(() => ipMatches(ip, idx.acctExact, idx.acctRanges)); }
+function emailBan(email) { const read = () => idx.emails.get(String(email || '').trim().toLowerCase()) || { account: false, view: false }; return load().then(read); }
+function userBan(userId) { const read = () => idx.users.get(String(userId)) || { account: false, view: false }; return load().then(read); }
+
+function reload() { loaded = undefined; return load(); }
 
 function add(ban) {
-  insert.run({
-    kind: ban.kind,
-    value: String(ban.value).trim(),
-    block_account: ban.block_account ? 1 : 0,
-    block_view: ban.block_view ? 1 : 0,
-    reason: ban.reason || null,
-    created_at: Date.now(),
-    created_by: ban.created_by || null,
-    expires_at: ban.expires_at || null,
-  });
-  load();
+  return (async () => {
+  const db = await getDatabase();
+  await db.run(
+    `INSERT INTO bans (kind, value, block_account, block_view, reason, created_at, created_by, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [ban.kind, String(ban.value).trim(), ban.block_account ? 1 : 0, ban.block_view ? 1 : 0,
+      ban.reason || null, Date.now(), ban.created_by || null, ban.expires_at || null]
+  );
+  await reload();
+  })();
 }
 
-// Delete expired bans from the table and rebuild the index. Returns count removed.
 function sweepExpired() {
-  const info = delExpired.run(Date.now());
-  if (info.changes) load();
-  return info.changes;
+  return (async () => {
+    const db = await getDatabase();
+    const result = await db.run('DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= ?', [Date.now()]);
+    if (result.changes) await reload();
+    return result.changes;
+  })();
 }
+
 function remove(id) {
-  del.run(id);
-  load();
+  return (async () => {
+    await (await getDatabase()).run('DELETE FROM bans WHERE id = ?', [id]);
+    await reload();
+  })();
 }
+
 function removeMatching(kind, value) {
-  delWhere.run(kind, String(value).trim());
-  load();
-}
-function list() {
-  return all.all();
+  return (async () => {
+    await (await getDatabase()).run('DELETE FROM bans WHERE kind = ? AND value = ?', [kind, String(value).trim()]);
+    await reload();
+  })();
 }
 
-load();
+async function list() {
+  return (await getDatabase()).all('SELECT * FROM bans ORDER BY created_at DESC');
+}
 
-module.exports = {
-  isViewBannedIp,
-  isAccountBannedIp,
-  emailBan,
-  userBan,
-  add,
-  remove,
-  removeMatching,
-  sweepExpired,
-  list,
-  reload: load,
-};
+module.exports = { isViewBannedIp, isAccountBannedIp, emailBan, userBan, add, remove, removeMatching, sweepExpired, list, reload };

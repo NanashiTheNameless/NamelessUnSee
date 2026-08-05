@@ -11,13 +11,15 @@
     "dev": "node --watch src/server.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\"",
     "create-admin": "node src/scripts/create-admin.js",
-    "set-owner": "node src/scripts/set-owner.js"
+    "set-owner": "node src/scripts/set-owner.js",
+    "migrate-d1": "node src/scripts/migrate-d1.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1090.0",
+    "@libsql/client": "^0.17.0",
     "better-sqlite3": "^12.11.1",
     "cookie-parser": "^1.4.7",
     "ejs": "^6.0.1",

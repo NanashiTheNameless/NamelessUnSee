@@ -23,11 +23,11 @@ function scriptPolicy(res) {
 
 // Refuse all access from view-banned IPs (or logged-in view-banned users) before
 // anything else is served. Only a lookup- no logging, no external calls.
-function enforceViewBan(req, res, next) {
+async function enforceViewBan(req, res, next) {
   if (req.path === '/healthz') return next();
   const ip = geo.clientIp(req);
-  let banned = bans.isViewBannedIp(ip);
-  if (!banned && req.user) banned = bans.userBan(req.user.id).view;
+  let banned = await bans.isViewBannedIp(ip);
+  if (!banned && req.user) banned = (await bans.userBan(req.user.id)).view;
   if (banned) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(403).render('banned', {});

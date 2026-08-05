@@ -18,15 +18,15 @@
   }
   function prettyValue(value, depth) {
     depth = depth || 0;
-    if (value === null || value === undefined || value === '') return '<span class="muted">—</span>';
+    if (value === null || value === undefined || value === '') return '<span class="muted">-</span>';
     if (typeof value !== 'object') return '<span class="mono">' + escapeHtml(value) + '</span>';
     if (depth > 3) return '<span class="muted">[nested data]</span>';
     if (Array.isArray(value)) {
-      if (!value.length) return '<span class="muted">—</span>';
+      if (!value.length) return '<span class="muted">-</span>';
       return '<div class="log-list">' + value.map((v) => '<div>' + prettyValue(v, depth + 1) + '</div>').join('') + '</div>';
     }
     const entries = Object.entries(value);
-    if (!entries.length) return '<span class="muted">—</span>';
+    if (!entries.length) return '<span class="muted">-</span>';
     return '<div class="log-fields">' + entries.map(([key, val]) =>
       '<div class="log-field"><div class="log-key">' + escapeHtml(humanKey(key)) + '</div><div>' + prettyValue(val, depth + 1) + '</div></div>'
     ).join('') + '</div>';
@@ -116,8 +116,8 @@
             <div class="log-field"><div class="log-key">IP address</div><div class="mono"><%= r.ip || 'unknown' %></div></div>
             <div class="log-field"><div class="log-key">Country</div><div><%= r.ip_country || (r.geo && r.geo.country) || 'unknown' %></div></div>
             <% if (r.geo) { %>
-              <div class="log-field"><div class="log-key">Place</div><div><%= [r.geo.city, r.geo.region].filter(Boolean).join(', ') || '—' %></div></div>
-              <div class="log-field"><div class="log-key">Organization</div><div><%= r.geo.org || r.geo.asn || '—' %></div></div>
+              <div class="log-field"><div class="log-key">Place</div><div><%= [r.geo.city, r.geo.region].filter(Boolean).join(', ') || '-' %></div></div>
+              <div class="log-field"><div class="log-key">Organization</div><div><%= r.geo.org || r.geo.asn || '-' %></div></div>
               <div class="log-field"><div class="log-key">Network assessment</div><div><%- prettyValue(r.geo.proxy) %></div></div>
             <% } %>
           </div>
@@ -126,8 +126,8 @@
           <h3>Device &amp; request</h3>
           <% if (r.device) { %><%- prettyValue(r.device) %><% } %>
           <div class="log-fields" style="margin-top:.6rem">
-            <div class="log-field"><div class="log-key">User agent</div><div class="mono" style="word-break:break-word"><%= r.user_agent || '—' %></div></div>
-            <div class="log-field"><div class="log-key">View reference</div><div class="mono"><%= r.view_id || '—' %></div></div>
+            <div class="log-field"><div class="log-key">User agent</div><div class="mono" style="word-break:break-word"><%= r.user_agent || '-' %></div></div>
+            <div class="log-field"><div class="log-key">View reference</div><div class="mono"><%= r.view_id || '-' %></div></div>
           </div>
         </section>
       </div>
