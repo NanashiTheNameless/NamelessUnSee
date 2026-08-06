@@ -7,6 +7,7 @@ const config = require('../config');
 const { legalPage, gatePage, grantConsent, hasConsent } = require('../middleware');
 const { verifySolution, obfuscate } = require('../altcha');
 const { limiters } = require('../ratelimit');
+const { renderMarkdown } = require('../util/markdown');
 
 const router = express.Router();
 router.use(limiters.public);
@@ -69,7 +70,7 @@ router.get('/privacy', legalPage, (req, res) => {
   });
 });
 
-// Open-source acknowledgements, code-license explainer, and the raw licence text.
+// Open-source acknowledgements, code-license explainer, and the rendered licence text.
 router.get('/acknowledgements', (req, res) => {
   res.render('acknowledgements', {});
 });
@@ -80,9 +81,11 @@ router.get('/license', (req, res) => {
 
 router.get('/license.md', (req, res) => {
   try {
-    res.type('text/plain; charset=utf-8').send(fs.readFileSync(LICENSE_PATH, 'utf8'));
+    const source = fs.readFileSync(LICENSE_PATH, 'utf8');
+    if (req.query.raw === 'true') return res.type('text/markdown').send(source);
+    res.render('license-markdown', { licenseHtml: renderMarkdown(source) });
   } catch {
-    res.status(404).type('text').send('LICENSE.md not found');
+    res.status(404).render('error', { title: 'Not found', message: 'LICENSE.md not found' });
   }
 });
 

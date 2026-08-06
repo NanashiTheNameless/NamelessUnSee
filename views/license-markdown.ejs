@@ -1,0 +1,10 @@
+<% var pageTitle = 'NamelessUnSee - NNCL v1.5'; %>
+<%- include('partials/head', { pageTitle: pageTitle }) %>
+<%- include('partials/nav') %>
+<div class="wrap">
+  <p class="chip" style="margin:0 auto .8rem">Want the raw Markdown: <a href="/license.md?raw=true">?raw=true</a></p>
+  <main class="card license-markdown" style="width:min(100%, 1100px); text-align:left">
+    <%- licenseHtml %>
+  </main>
+</div>
+<%- include('partials/foot') %>

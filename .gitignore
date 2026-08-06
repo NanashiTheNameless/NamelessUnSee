@@ -3,6 +3,8 @@ data/
 !data/.gitkeep
 *.log
 .env
+.env.bak
+.env.back
 .env.local
 npm-debug.log*
 .DS_Store
