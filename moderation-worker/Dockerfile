@@ -1,7 +1,9 @@
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 WORKDIR /app
 COPY package.json yarn.lock .yarnrc.yml ./
-RUN corepack enable && corepack install && corepack yarn install --immutable
+# Node 26 no longer bundles Corepack, so install it before enabling the pinned Yarn.
+RUN npm install -g corepack@latest \
+ && corepack enable && corepack install && corepack yarn install --immutable
 COPY index.js ./
 ENV PORT=8787 \
     MODEL_CACHE_DIR=/app/models \

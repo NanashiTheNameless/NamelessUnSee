@@ -18,5 +18,7 @@ dist/
 !.yarn/plugins
 !.yarn/sdks
 !.yarn/versions
-.yarn/install-state.gz
+# Slash-containing patterns anchor to this directory, so match nested
+# workspaces (moderation-worker/) explicitly.
+**/.yarn/install-state.gz
 .pnp.*

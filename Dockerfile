@@ -1,14 +1,16 @@
 # --- build stage: install dependencies with Yarn Berry (native modules compile here)
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY .yarnrc.yml package.json yarn.lock ./
-RUN corepack enable && corepack install && corepack yarn install --immutable
+# Node 26 no longer bundles Corepack, so install it before enabling the pinned Yarn.
+RUN npm install -g corepack@latest \
+ && corepack enable && corepack install && corepack yarn install --immutable
 
 # --- runtime stage
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/app/data
@@ -23,7 +25,7 @@ COPY assets/fonts/0xProto-Regular.ttf assets/fonts/0xProto-Bold.ttf /usr/share/f
 RUN fc-cache -f
 COPY --from=build /app/node_modules ./node_modules
 COPY . .
-RUN corepack enable && corepack install
+RUN npm install -g corepack@latest && corepack enable && corepack install
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 EXPOSE 3000
