@@ -77,7 +77,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Delete old untagged GHCR versions
-        uses: actions/delete-package-versions@v5
+        uses: NanashiTheNameless/delete-package-versions@main
         with:
           package-name: ${{ github.event.repository.name }}
           package-type: container
