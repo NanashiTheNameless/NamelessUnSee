@@ -2,7 +2,7 @@ FROM node:26-bookworm-slim
 WORKDIR /app
 COPY package.json yarn.lock .yarnrc.yml ./
 # Node 26 no longer bundles Corepack, so install it before enabling the pinned Yarn.
-RUN npm install -g corepack@latest \
+RUN npm install -g --no-update-notifier --no-fund corepack@latest \
  && corepack enable && corepack install && corepack yarn install --immutable
 COPY index.js ./
 ENV PORT=8787 \

@@ -6,7 +6,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 COPY .yarnrc.yml package.json yarn.lock ./
 # Node 26 no longer bundles Corepack, so install it before enabling the pinned Yarn.
-RUN npm install -g corepack@latest \
+RUN npm install -g --no-update-notifier --no-fund corepack@latest \
  && corepack enable && corepack install && corepack yarn install --immutable
 
 # --- runtime stage
@@ -25,7 +25,7 @@ COPY assets/fonts/0xProto-Regular.ttf assets/fonts/0xProto-Bold.ttf /usr/share/f
 RUN fc-cache -f
 COPY --from=build /app/node_modules ./node_modules
 COPY . .
-RUN npm install -g corepack@latest && corepack enable && corepack install
+RUN npm install -g --no-update-notifier --no-fund corepack@latest && corepack enable && corepack install
 RUN mkdir -p /app/data && chown -R node:node /app
 USER node
 EXPOSE 3000

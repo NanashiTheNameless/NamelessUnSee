@@ -22,7 +22,7 @@ jobs:
 
       - name: Enable Corepack and install pinned Yarn
         # Node 26 no longer bundles Corepack, so install it first.
-        run: npm install -g corepack@latest && corepack enable && corepack install
+        run: npm install -g --no-update-notifier --no-fund corepack@latest && corepack enable && corepack install
 
       - name: Install dependencies
         run: corepack yarn install --immutable
