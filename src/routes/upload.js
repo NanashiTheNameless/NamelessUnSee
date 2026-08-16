@@ -17,6 +17,7 @@ const ranks = require('../ranks');
 const notify = require('../notify');
 const { beneath } = require('../util/safe-path');
 const { verifySolution } = require('../altcha');
+const chunked = require('../chunked-upload');
 
 const router = express.Router();
 
@@ -89,6 +90,106 @@ const listMineDeleted = statement(
    ORDER BY deleted_at DESC`
 );
 
+// Retention settings come from the form, falling back to the user's defaults.
+function resolveRetention(body, defaults) {
+  const requestedTtl = body.ttl || defaults.default_ttl;
+  const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
+  const requestedMaxViews = body.max_views === undefined || body.max_views === '' ? defaults.default_max_views : body.max_views;
+  const parsedViews = parseInt(requestedMaxViews, 10);
+  return {
+    ttlSeconds: TTL_PRESETS[ttlKey],
+    timerStart: (body.timer_start || defaults.default_timer_start) === 'upload' ? 'upload' : 'first_view',
+    maxViews: Number.isInteger(parsedViews) && parsedViews > 0 ? parsedViews : null,
+    title: String(body.title || '').slice(0, 200) || null,
+  };
+}
+
+/**
+ * Take one staged file through probe -> moderation -> storage -> database.
+ * Shared by the multipart path and the chunked path, so both apply identical
+ * validation and produce identical rows. Consumes `filePath`: it is unlinked
+ * whether or not this succeeds.
+ */
+async function processStagedFile({ user, filePath, mimetype, size, retention }) {
+  let dims;
+  try {
+    dims = await watermark.probe(filePath);
+    if (!dims.format) throw new Error('unrecognised media');
+  } catch {
+    throw new Error('That file is not a valid image or video.');
+  }
+
+  const now = Date.now();
+  const expiresAt = retention.timerStart === 'upload' && retention.ttlSeconds
+    ? now + retention.ttlSeconds * 1000
+    : null;
+
+  let mod = { status: 'ok', reason: null, score: null, phash: null };
+  if (ranks.shouldScan(user)) {
+    try {
+      mod = await moderation.scan(filePath);
+    } catch (error) {
+      console.warn('[NamelessUnSee] moderation scan failed:', error.message);
+      if (config.moderation.enabled && config.moderation.nsfw.enabled && config.moderation.nsfw.failClosed) {
+        mod = { status: 'review', reason: 'moderation-scan:failed', score: null, details: null, phash: null };
+      }
+    }
+  }
+
+  const token = uuidv7(now);
+  const mediaDir = dims.mediaType === 'video' ? 'Videos' : 'Images';
+  const date = new Date(now);
+  const datePart = [date.getMonth() + 1, date.getDate(), date.getFullYear()].map((v) => String(v).padStart(2, '0')).join('.');
+  const storageName = `upload/${user.id}/${mediaDir}/${datePart}_${now}_${token}${EXT[mimetype] || '.bin'}`;
+  const stored = await storage.put(filePath, storageName);
+  fs.unlink(filePath, () => {});
+
+  let image;
+  try {
+    const info = await insertImage.run({
+      token, owner_id: user.id, storage_name: stored.storage_name, mime: mimetype,
+      width: dims.width, height: dims.height, byte_size: size, title: retention.title, created_at: now,
+      ttl_seconds: retention.ttlSeconds, timer_start: retention.timerStart, max_views: retention.maxViews,
+      expires_at: expiresAt,
+      phash: mod.phash, moderation_status: mod.status, moderation_reason: mod.reason,
+      moderation_score: mod.score, moderation_details: mod.details ? JSON.stringify(mod.details) : null,
+      storage_backend: stored.storage_backend, storage_encrypted: stored.storage_encrypted,
+    });
+    image = await statement('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
+  } catch (error) {
+    await storage.remove(stored).catch(() => {});
+    throw error;
+  }
+
+  if (mod.status !== 'ok') {
+    notify.notifyAdminFlag({
+      username: user.username, email: user.email, token, title: retention.title,
+      reason: mod.reason, score: mod.score, reports: mod.details,
+    }).catch(() => {});
+  }
+  return { image, flagged: mod.status !== 'ok' };
+}
+
+// A batch of more than one file becomes a gallery, as on the multipart path.
+async function galleryFor(created, user, title) {
+  if (created.length <= 1) return null;
+  const now = Date.now();
+  const galleryToken = uuidv7(now);
+  const galleryId = (await insertGallery.run(galleryToken, user.id, title || 'Uploaded gallery', now)).lastInsertRowid;
+  const db = await getDatabase();
+  await db.batch(created.map((image, index) => ({
+    sql: 'INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)',
+    args: [galleryId, image.id, index + 1, now],
+  })));
+  return galleryToken;
+}
+
+function dashboardRedirect({ flagged, galleryToken }) {
+  return '/dashboard?uploaded=1'
+    + (flagged ? '&flagged=1' : '')
+    + (galleryToken ? `&gallery=${encodeURIComponent(galleryToken)}` : '');
+}
+
 router.get('/dashboard', requireAuth, async (req, res) => {
   const defaults = await getDefaults.get(req.user.id) || {};
   const effective = ranks.limits({ ...req.user, ...defaults });
@@ -104,6 +205,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     storageLimit: effective.storageBytes,
     rank: req.user.rank,
     defaults,
+    chunkedUploads: config.chunkedUpload.enabled,
+    chunkBytes: config.chunkedUpload.chunkBytes,
     notice: req.query.uploaded ? 'Image uploaded.' : null,
     flagged: !!req.query.flagged,
     gallery: req.query.gallery || null,
@@ -153,14 +256,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
     }
 
     const defaults = await getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
-    const requestedTtl = req.body.ttl || defaults.default_ttl;
-    const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
-    const ttlSeconds = TTL_PRESETS[ttlKey];
-    const timerStart = (req.body.timer_start || defaults.default_timer_start) === 'upload' ? 'upload' : 'first_view';
-    const requestedMaxViews = req.body.max_views === undefined || req.body.max_views === '' ? defaults.default_max_views : req.body.max_views;
-    let maxViews = parseInt(requestedMaxViews, 10);
-    maxViews = Number.isInteger(maxViews) && maxViews > 0 ? maxViews : null;
-    const title = String(req.body.title || '').slice(0, 200) || null;
+    const retention = resolveRetention(req.body, defaults);
     const created = [];
     let flagged = false;
 
@@ -168,51 +264,11 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
       for (const file of files) {
         const filePath = stagedPath(file);
         if (file.buffer && !fs.existsSync(filePath)) await fs.promises.writeFile(filePath, file.buffer, { mode: 0o600 });
-        let dims;
-        try {
-          dims = await watermark.probe(filePath);
-          if (!dims.format) throw new Error('unrecognised media');
-        } catch {
-          throw new Error('That file is not a valid image or video.');
-        }
-
-        const now = Date.now();
-        const expiresAt = timerStart === 'upload' && ttlSeconds ? now + ttlSeconds * 1000 : null;
-        let mod = { status: 'ok', reason: null, score: null, phash: null };
-        if (ranks.shouldScan(req.user)) {
-          try { mod = await moderation.scan(filePath); } catch (error) {
-            console.warn('[NamelessUnSee] moderation scan failed:', error.message);
-            if (config.moderation.enabled && config.moderation.nsfw.enabled && config.moderation.nsfw.failClosed) {
-              mod = { status: 'review', reason: 'moderation-scan:failed', score: null, details: null, phash: null };
-            }
-          }
-        }
-
-        const token = uuidv7(now);
-        const mediaDir = dims.mediaType === 'video' ? 'Videos' : 'Images';
-        const datePart = [new Date(now).getMonth() + 1, new Date(now).getDate(), new Date(now).getFullYear()].map((v) => String(v).padStart(2, '0')).join('.');
-        const storageName = `upload/${req.user.id}/${mediaDir}/${datePart}_${now}_${token}${EXT[file.mimetype] || '.bin'}`;
-        const stored = await storage.put(filePath, storageName);
-        fs.unlink(filePath, () => {});
-        try {
-          const info = await insertImage.run({
-            token, owner_id: req.user.id, storage_name: stored.storage_name, mime: file.mimetype,
-            width: dims.width, height: dims.height, byte_size: file.size, title, created_at: now,
-            ttl_seconds: ttlSeconds, timer_start: timerStart, max_views: maxViews, expires_at: expiresAt,
-            phash: mod.phash, moderation_status: mod.status, moderation_reason: mod.reason,
-            moderation_score: mod.score, moderation_details: mod.details ? JSON.stringify(mod.details) : null,
-            storage_backend: stored.storage_backend, storage_encrypted: stored.storage_encrypted,
-          });
-          const image = await statement('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
-          created.push(image);
-        } catch (error) {
-          await storage.remove(stored).catch(() => {});
-          throw error;
-        }
-        if (mod.status !== 'ok') {
-          flagged = true;
-          notify.notifyAdminFlag({ username: req.user.username, email: req.user.email, token, title, reason: mod.reason, score: mod.score, reports: mod.details }).catch(() => {});
-        }
+        const result = await processStagedFile({
+          user: req.user, filePath, mimetype: file.mimetype, size: file.size, retention,
+        });
+        created.push(result.image);
+        if (result.flagged) flagged = true;
       }
     } catch (error) {
       removeStaged();
@@ -224,165 +280,154 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
       return res.status(400).render('error', { title: 'Upload error', message });
     }
 
-    let galleryToken = null;
-    if (created.length > 1) {
-      const now = Date.now();
-      galleryToken = uuidv7(now);
-      const galleryId = (await insertGallery.run(galleryToken, req.user.id, title || 'Uploaded gallery', now)).lastInsertRowid;
-      const db = await getDatabase();
-      await db.batch(created.map((image, index) => ({
-        sql: 'INSERT INTO gallery_items (gallery_id, image_id, position, added_at) VALUES (?, ?, ?, ?)',
-        args: [galleryId, image.id, index + 1, now],
-      })));
-    }
-    res.redirect('/dashboard?uploaded=1' + (flagged ? '&flagged=1' : '') + (galleryToken ? `&gallery=${encodeURIComponent(galleryToken)}` : ''));
+    const galleryToken = await galleryFor(created, req.user, retention.title);
+    res.redirect(dashboardRedirect({ flagged, galleryToken }));
   });
 });
 
-router.post('/upload', requireAuth, limiters.upload, (req, res) => {
-  // multer must parse the multipart body before we can read the CSRF field.
-  uploadFor(req.user).single('image')(req, res, async (err) => {
-    if (err) {
-      const msg = err.code === 'LIMIT_FILE_SIZE'
-        ? `File too large (max ${Math.round(config.maxUploadBytes / (1024 * 1024))} MB).`
-        : 'Upload failed.';
-      return res.status(400).render('error', { title: 'Upload error', message: msg });
-    }
-    // CSRF check (post-parse). Delete any uploaded file if it fails.
-    if (!req.session || !req.body._csrf || req.body._csrf !== req.session.csrf_token) {
-      if (req.file) {
-        try { fs.unlink(stagedPath(req.file), () => {}); } catch { /* invalid staged path */ }
-      }
-      return res.status(403).render('error', { title: 'Forbidden', message: 'Invalid CSRF token. Please reload and try again.' });
-    }
-    if (!req.file) {
-      return res.status(400).render('error', { title: 'Upload error', message: 'No media file provided (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
-    }
-    let filePath;
-    try { filePath = stagedPath(req.file); } catch {
-      return res.status(400).render('error', { title: 'Upload error', message: 'Invalid staged upload.' });
-    }
-    if (req.file.buffer && !fs.existsSync(filePath)) {
-      try {
-        await fs.promises.writeFile(filePath, req.file.buffer, { mode: 0o600 });
-      } catch {
-        return res.status(500).render('error', { title: 'Upload error', message: 'The upload could not be staged.' });
-      }
-    }
-    const limits = await getDefaults.get(req.user.id) || {};
-    const effective = ranks.limits({ ...req.user, ...limits });
-    const uploadLimit = effective.uploadBytes;
-    if (req.file.size > uploadLimit) {
-      fs.unlink(filePath, () => {});
-      return res.status(400).render('error', { title: 'Upload error', message: `File too large (your limit is ${Math.round(uploadLimit / (1024 * 1024))} MB).` });
-    }
-    const used = (await storageUsed.get(req.user.id)).bytes;
-    const storageLimit = effective.storageBytes;
-    if (used + req.file.size > storageLimit) {
-      fs.unlink(filePath, () => {});
-      return res.status(400).render('error', { title: 'Upload error', message: `Storage limit reached. You have ${Math.max(0, Math.floor((storageLimit - used) / (1024 * 1024)))} MB remaining.` });
-    }
 
-    // Verify the bytes really are a decodable image or video; delete if not.
-    let dims;
-    try {
-      dims = await watermark.probe(filePath);
-      if (!dims.format) throw new Error('unrecognised media');
-    } catch (error) {
-      fs.unlink(filePath, () => {});
-      return res.status(400).render('error', { title: 'Upload error', message: 'That file is not a valid image or video.' });
+// --- chunked upload ---------------------------------------------------------
+// A reverse proxy caps request bodies (Cloudflare: 100 MB on most plans), so a
+// large file is posted as slices instead: /upload/init once, then each slice to
+// /upload/chunk/:id/:index, then /upload/complete. Only /init spends the altcha
+// solution- solutions are single-use, so verifying one per chunk would fail on
+// the second request.
+
+const chunkBody = express.raw({
+  type: 'application/octet-stream',
+  limit: config.chunkedUpload.chunkBytes + 4096, // headroom so a full chunk is never a 413
+});
+
+// Chunk bodies are raw bytes, so the token travels in a header there. A custom
+// header cannot be set cross-origin without a CORS preflight this server never
+// grants, and the same-origin guard in server.js applies on top.
+function csrfOk(req) {
+  const token = (req.body && !Buffer.isBuffer(req.body) && req.body._csrf) || req.get('X-CSRF-Token');
+  return !!(req.session && token && token === req.session.csrf_token);
+}
+
+function chunkingEnabled(res) {
+  if (config.chunkedUpload.enabled) return true;
+  res.status(404).json({ error: 'Chunked uploads are disabled.' });
+  return false;
+}
+
+router.post('/upload/init', requireAuth, limiters.upload, async (req, res) => {
+  if (!chunkingEnabled(res)) return;
+  if (!csrfOk(req)) return res.status(403).json({ error: 'Invalid CSRF token. Please reload and try again.' });
+  if (!verifySolution(req.body.altcha)) return res.status(400).json({ error: 'Complete the bot check before uploading.' });
+
+  const requested = Array.isArray(req.body.files) ? req.body.files : [];
+  if (!requested.length) return res.status(400).json({ error: 'No media files provided.' });
+  if (requested.length > 50) return res.status(400).json({ error: 'You may upload up to 50 files at once.' });
+
+  const limits = await getDefaults.get(req.user.id) || {};
+  const effective = ranks.limits({ ...req.user, ...limits });
+  const hardLimit = ranks.isOwner(req.user) ? Infinity : config.maxUploadBytesHard;
+
+  let total = 0;
+  for (const file of requested) {
+    const size = Number(file && file.size);
+    if (!Number.isInteger(size) || size <= 0) return res.status(400).json({ error: 'Invalid file size.' });
+    if (!ALLOWED_MIME.has(file.mime)) {
+      return res.status(400).json({ error: 'Unsupported file type (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
     }
-
-    const now = Date.now();
-
-    // Retention: duration preset and/or a maximum view count.
-    const defaults = await getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
-    const requestedTtl = req.body.ttl || defaults.default_ttl;
-    const ttlKey = Object.prototype.hasOwnProperty.call(TTL_PRESETS, requestedTtl) ? requestedTtl : '24h';
-    const ttlSeconds = TTL_PRESETS[ttlKey];
-    const timerStart = (req.body.timer_start || defaults.default_timer_start) === 'upload' ? 'upload' : 'first_view';
-    const requestedMaxViews = req.body.max_views === undefined || req.body.max_views === ''
-      ? defaults.default_max_views
-      : req.body.max_views;
-    let maxViews = parseInt(requestedMaxViews, 10);
-    maxViews = Number.isInteger(maxViews) && maxViews > 0 ? maxViews : null;
-
-    // If the timer starts on upload, compute expiry now; otherwise it starts on
-    // the first view (expires_at stays NULL until then).
-    const expiresAt = timerStart === 'upload' && ttlSeconds ? now + ttlSeconds * 1000 : null;
-
-    // Moderation scan of the original (perceptual-hash blocklist + optional NSFW
-    // classifier). Precise matches quarantine; classifier hits go to review.
-    let mod = { status: 'ok', reason: null, score: null, phash: null };
-    if (ranks.shouldScan(req.user)) {
-      try {
-        mod = await moderation.scan(filePath);
-      } catch (error) {
-        // A scan failure must not lose the upload. When classifier fail-closed
-        // mode is enabled, hold it for review instead of making it look clean.
-        console.warn('[NamelessUnSee] moderation scan failed:', error.message);
-        if (config.moderation.enabled && config.moderation.nsfw.enabled && config.moderation.nsfw.failClosed) {
-          mod = { status: 'review', reason: 'moderation-scan:failed', score: null, details: null, phash: null };
-        }
-      }
+    if (size > effective.uploadBytes || size > hardLimit) {
+      return res.status(400).json({ error: `File too large (your limit is ${Math.round(effective.uploadBytes / (1024 * 1024))} MB per file).` });
     }
+    total += size;
+  }
 
-    const token = uuidv7(now);
-    const mediaDir = dims.mediaType === 'video' ? 'Videos' : 'Images';
-    const date = new Date(now);
-    const datePart = [date.getMonth() + 1, date.getDate(), date.getFullYear()].map((v) => String(v).padStart(2, '0')).join('.');
-    const storageName = `upload/${req.user.id}/${mediaDir}/${datePart}_${now}_${token}${EXT[req.file.mimetype] || '.bin'}`;
-    let stored;
-    try {
-      stored = await storage.put(filePath, storageName);
-    } catch {
-      fs.unlink(filePath, () => {});
-      return res.status(500).render('error', { title: 'Upload error', message: 'The image could not be stored.' });
-    }
-    fs.unlink(filePath, () => {});
-    try {
-      await insertImage.run({
-      token,
-      owner_id: req.user.id,
-      storage_name: stored.storage_name,
-      mime: req.file.mimetype,
-      width: dims.width,
-      height: dims.height,
-      byte_size: req.file.size,
-      title: (req.body.title || '').slice(0, 200) || null,
-      created_at: now,
-      ttl_seconds: ttlSeconds,
-      timer_start: timerStart,
-      max_views: maxViews,
-      expires_at: expiresAt,
-      phash: mod.phash,
-      moderation_status: mod.status,
-      moderation_reason: mod.reason,
-      moderation_score: mod.score,
-      moderation_details: mod.details ? JSON.stringify(mod.details) : null,
-      storage_backend: stored.storage_backend,
-      storage_encrypted: stored.storage_encrypted,
-      });
-    } catch (error) {
-      await storage.remove(stored).catch(() => {});
-      return res.status(500).render('error', { title: 'Upload error', message: 'The image could not be stored.' });
-    }
+  const used = (await storageUsed.get(req.user.id)).bytes;
+  if (used + total > effective.storageBytes) {
+    return res.status(400).json({ error: `Storage limit reached. You have ${Math.max(0, Math.floor((effective.storageBytes - used) / (1024 * 1024)))} MB remaining.` });
+  }
 
-    if (mod.status !== 'ok') {
-      notify.notifyAdminFlag({
-        username: req.user.username,
-        email: req.user.email,
-        token,
-        title: (req.body.title || '').slice(0, 200) || null,
-        reason: mod.reason,
-        score: mod.score,
-        reports: mod.details,
-      }).catch(() => {});
-    }
-
-    const flagged = mod.status !== 'ok';
-    res.redirect('/dashboard?uploaded=1' + (flagged ? '&flagged=1' : ''));
+  const uploads = requested.map((file) => {
+    const session = chunked.create({
+      userId: req.user.id, mime: file.mime, size: Number(file.size), ext: EXT[file.mime] || '.bin',
+    });
+    return { id: session.id, totalChunks: session.totalChunks };
   });
+  res.json({ chunkBytes: config.chunkedUpload.chunkBytes, uploads });
+});
+
+router.post('/upload/chunk/:id/:index', requireAuth, limiters.uploadChunk, chunkBody, async (req, res) => {
+  if (!chunkingEnabled(res)) return;
+  if (!csrfOk(req)) return res.status(403).json({ error: 'Invalid CSRF token. Please reload and try again.' });
+
+  const session = chunked.get(req.params.id, req.user.id);
+  if (!session) return res.status(404).json({ error: 'Unknown or expired upload session.' });
+
+  try {
+    const progress = await chunked.writeChunk(session, Number(req.params.index), req.body);
+    res.json(progress);
+  } catch (error) {
+    // A bad or over-budget chunk voids the whole session rather than letting the
+    // client retry its way around the size check.
+    chunked.discard(session);
+    res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/upload/complete', requireAuth, limiters.upload, async (req, res) => {
+  if (!chunkingEnabled(res)) return;
+  if (!csrfOk(req)) return res.status(403).json({ error: 'Invalid CSRF token. Please reload and try again.' });
+
+  const ids = Array.isArray(req.body.ids) ? req.body.ids : [];
+  if (!ids.length) return res.status(400).json({ error: 'No uploads to finish.' });
+
+  const sessions = ids.map((id) => chunked.get(String(id), req.user.id));
+  if (sessions.some((session) => !session)) {
+    sessions.forEach((session) => chunked.discard(session));
+    return res.status(404).json({ error: 'An upload session expired. Please try again.' });
+  }
+  if (sessions.some((session) => !chunked.isComplete(session))) {
+    sessions.forEach((session) => chunked.discard(session));
+    return res.status(400).json({ error: 'Upload is incomplete. Please try again.' });
+  }
+
+  // Re-check against the bytes that actually arrived, not what was declared at
+  // init: quota may also have been consumed by another upload in between.
+  const limits = await getDefaults.get(req.user.id) || {};
+  const effective = ranks.limits({ ...req.user, ...limits });
+  const total = sessions.reduce((sum, session) => sum + session.bytes, 0);
+  if (sessions.some((session) => session.bytes > effective.uploadBytes)) {
+    sessions.forEach((session) => chunked.discard(session));
+    return res.status(400).json({ error: `File too large (your limit is ${Math.round(effective.uploadBytes / (1024 * 1024))} MB per file).` });
+  }
+  const used = (await storageUsed.get(req.user.id)).bytes;
+  if (used + total > effective.storageBytes) {
+    sessions.forEach((session) => chunked.discard(session));
+    return res.status(400).json({ error: `Storage limit reached. You have ${Math.max(0, Math.floor((effective.storageBytes - used) / (1024 * 1024)))} MB remaining.` });
+  }
+
+  const defaults = await getDefaults.get(req.user.id) || { default_ttl: '24h', default_timer_start: 'first_view', default_max_views: null };
+  const retention = resolveRetention(req.body, defaults);
+  const created = [];
+  let flagged = false;
+
+  try {
+    for (const session of sessions) {
+      const filePath = await chunked.assemble(session);
+      const result = await processStagedFile({
+        user: req.user, filePath, mimetype: session.mime, size: session.bytes, retention,
+      });
+      created.push(result.image);
+      if (result.flagged) flagged = true;
+    }
+  } catch (error) {
+    sessions.forEach((session) => chunked.discard(session));
+    for (const image of created) {
+      await softDelete.run(Date.now(), image.id);
+      storage.remove(image).catch(() => {});
+    }
+    const message = error.message === 'That file is not a valid image or video.' ? error.message : 'The upload could not be stored.';
+    return res.status(400).json({ error: message });
+  }
+
+  const galleryToken = await galleryFor(created, req.user, retention.title);
+  res.json({ redirect: dashboardRedirect({ flagged, galleryToken }) });
 });
 
 router.get('/dashboard/i/:token/logs', requireAuth, async (req, res) => {

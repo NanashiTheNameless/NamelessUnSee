@@ -82,6 +82,17 @@ async function serializeBody(method, headers, body) {
         parsedBody: JSON.parse(buf.toString('utf8')),
       };
     }
+    // Raw bodies are handed over pre-parsed, exactly as JSON and form bodies
+    // are above: this fake request is not backed by a socket, and on-finished
+    // reports a socketless request as already finished, so body-parser would
+    // skip reading the stream and leave req.body undefined.
+    if (ct.includes('application/octet-stream')) {
+      return {
+        body: null,
+        headers: Object.assign({}, headers, { 'content-length': String(buf.length) }),
+        parsedBody: buf,
+      };
+    }
     return { body: buf, headers: Object.assign({}, headers, { 'content-length': String(buf.length) }), parsedBody: undefined };
   }
   const req = new Request('http://example.test/', { method, headers, body });
@@ -101,7 +112,9 @@ class TestRequest extends Readable {
     this.httpVersion = '1.1';
     this.socket = { remoteAddress: '127.0.0.1', encrypted: false };
     this.connection = this.socket;
-    this._body = body;
+    // Not `_body`: body-parser uses that name as its "already parsed" flag, and
+    // storing the payload there makes express.raw/json skip the request.
+    this._payload = body;
     this._sent = false;
     this.complete = body == null;
     Object.defineProperty(this, 'readableEnded', { value: body == null, writable: true, configurable: true });
@@ -110,7 +123,7 @@ class TestRequest extends Readable {
   _read() {
     if (this._sent) return;
     this._sent = true;
-    if (this._body) this.push(this._body);
+    if (this._payload) this.push(this._payload);
     this.push(null);
     this.complete = true;
     this.readableEnded = true;

@@ -272,6 +272,10 @@ matching primary keys in D1; back up or test the target database first.
 | `MAX_REPORT_MB` | `10` | Max size per leak-report screenshot |
 | `MAX_UPLOAD_HARD_MB` | `4096` | Absolute ceiling for admin per-user upload overrides |
 | `MAX_STORAGE_MB` | `1024` | Default active storage quota per user |
+| `CHUNKED_UPLOAD_ENABLED` | `true` | Slice large files in the browser and reassemble them server-side, so a single request never exceeds the reverse proxy's body limit (Cloudflare: 100 MB on Free/Pro, 200 MB Business, 500 MB Enterprise). Without it, `MAX_UPLOAD_MB` is effectively capped at that limit |
+| `UPLOAD_CHUNK_MB` | `95` | Size of each slice. Files at or below this are posted in one request as before; larger ones are chunked. Keep it comfortably under the proxy limit |
+| `UPLOAD_SESSION_TTL_MIN` | `60` | How long a partially uploaded file may sit before its staged chunks are swept |
+| `RL_UPLOAD_CHUNK_MAX` / `RL_UPLOAD_CHUNK_WINDOW_MIN` | `5000` / `60` | Rate limit for chunk requests. Separate from `RL_UPLOAD_MAX` because one large file is many requests |
 | `DISPOSABLE_EMAIL_DOMAINS` | built-in list | Comma-separated disposable/alias email domains to reject at registration. Matches the domain and any subdomain of it, and is merged with the downloaded blocklist below |
 | `DISPOSABLE_LIST_ENABLED` / `DISPOSABLE_REFRESH_HOURS` | `true` / `24` | Download the [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) community blocklist (~8k domains) and refresh it on this interval. Cached under `DATA_DIR/intel`; matching is entirely local |
 | `DISPOSABLE_LIST_URL` | upstream raw URL | Override the blocklist source (one bare domain per line; `#` comments allowed) |

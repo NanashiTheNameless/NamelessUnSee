@@ -80,6 +80,17 @@ const config = {
   logRetentionAfterDeleteHours: int(process.env.LOG_RETENTION_AFTER_DELETE_HOURS, 48),
   maxUploadBytes: int(process.env.MAX_UPLOAD_MB, 500) * 1024 * 1024,
   maxUploadBytesHard: int(process.env.MAX_UPLOAD_HARD_MB, 4096) * 1024 * 1024,
+  // Chunked uploads. A reverse proxy caps how large a single request body may
+  // be- Cloudflare's limit is 100 MB on most plans- which would otherwise cap
+  // uploads far below MAX_UPLOAD_MB. The browser slices the file so no single
+  // request approaches that ceiling, and the server reassembles it. Chunking
+  // also keeps each request short enough to stay under proxy read timeouts.
+  chunkedUpload: {
+    enabled: bool(process.env.CHUNKED_UPLOAD_ENABLED, true),
+    chunkBytes: int(process.env.UPLOAD_CHUNK_MB, 95) * 1024 * 1024,
+    // How long a partially uploaded file may sit before its chunks are swept.
+    sessionTtlMs: int(process.env.UPLOAD_SESSION_TTL_MIN, 60) * 60 * 1000,
+  },
   maxStorageBytes: int(process.env.MAX_STORAGE_MB, 1024) * 1024 * 1024,
   storage: {
     // 'local', Cloudflare R2, or another S3-compatible object store.
@@ -239,6 +250,10 @@ const config = {
     login: { windowMs: int(process.env.RL_LOGIN_WINDOW_MIN, 15) * 60000, max: int(process.env.RL_LOGIN_MAX, 30) },
     signup: { windowMs: int(process.env.RL_SIGNUP_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_SIGNUP_MAX, 10) },
     upload: { windowMs: int(process.env.RL_UPLOAD_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_UPLOAD_MAX, 120) },
+    // Per-chunk budget, sized for whole files rather than requests: the hard
+    // ceiling is 4 GB, which is ~44 chunks, and RL_UPLOAD_MAX uploads of that
+    // size would be far more chunks than anyone sends in an hour.
+    uploadChunk: { windowMs: int(process.env.RL_UPLOAD_CHUNK_WINDOW_MIN, 60) * 60000, max: int(process.env.RL_UPLOAD_CHUNK_MAX, 5000) },
     view: { windowMs: int(process.env.RL_VIEW_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_VIEW_MAX, 600) },
     telemetry: { windowMs: int(process.env.RL_TELEMETRY_WINDOW_SEC, 60) * 1000, max: int(process.env.RL_TELEMETRY_MAX, 600) },
     report: { windowMs: int(process.env.RL_REPORT_WINDOW_MIN, 1440) * 60000, max: int(process.env.RL_REPORT_MAX, 10) },

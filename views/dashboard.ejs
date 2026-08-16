@@ -30,6 +30,7 @@
 
       <label for="image">Image or video file</label>
       <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/gif,image/avif,video/mp4,video/webm,video/quicktime,video/ogg" multiple required>
+      <p id="chunk-note" class="muted" hidden style="margin:.4rem 0 0"></p>
 
       <div class="grid two" style="margin-top:.6rem">
         <div>
@@ -167,32 +168,142 @@
       if (progress) progress.hidden = true;
     };
     if (!form || !file || !button) return;
+
+    const chunkNote = document.getElementById('chunk-note');
+    const csrf = form.querySelector('input[name="_csrf"]').value;
+    // Anything at or below this goes as one ordinary multipart post; above it,
+    // the file is sliced so no single request hits the proxy's body limit.
+    const CHUNK_THRESHOLD = <%= chunkBytes %>;
+    const CHUNK_ENABLED = <%= chunkedUploads ? 'true' : 'false' %>;
+    const MAX_CHUNK_RETRIES = 3;
+    const asMb = (bytes) => Math.round(bytes / 1048576);
+
+    // Tell the user up front when a selection is large enough to be sliced, so
+    // a long multi-request upload is not a surprise.
+    const describeSelection = () => {
+      if (!chunkNote) return;
+      const big = Array.from(file.files).filter((f) => f.size > CHUNK_THRESHOLD);
+      if (!CHUNK_ENABLED || !big.length) {
+        chunkNote.hidden = true;
+        chunkNote.textContent = '';
+        return;
+      }
+      const chunks = big.reduce((sum, f) => sum + Math.ceil(f.size / CHUNK_THRESHOLD), 0);
+      chunkNote.textContent = big.length === 1
+        ? `This file is ${asMb(big[0].size)} MB, so it will be sent in ${chunks} pieces of up to ${asMb(CHUNK_THRESHOLD)} MB and reassembled on the server. Keep this tab open until it finishes.`
+        : `${big.length} of these files are over ${asMb(CHUNK_THRESHOLD)} MB, so they will be sent in ${chunks} pieces and reassembled on the server. Keep this tab open until it finishes.`;
+      chunkNote.hidden = false;
+    };
+    file.addEventListener('change', describeSelection);
+    describeSelection();
+
+    const say = (text) => { if (progress) { progress.hidden = false; progress.textContent = text; } };
+    const fields = () => {
+      const data = new FormData(form);
+      return {
+        title: data.get('title') || '',
+        ttl: data.get('ttl') || '',
+        timer_start: data.get('timer_start') || '',
+        max_views: data.get('max_views') || '',
+      };
+    };
+    const postJson = async (url, body) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        credentials: 'same-origin',
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || 'Upload failed.');
+      return payload;
+    };
+
+    const sendChunk = async (id, index, blob) => {
+      for (let attempt = 1; ; attempt += 1) {
+        try {
+          const response = await fetch('/upload/chunk/' + id + '/' + index, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': csrf },
+            body: blob,
+            credentials: 'same-origin',
+          });
+          if (response.ok) return;
+          const payload = await response.json().catch(() => ({}));
+          // The server voids a session on a rejected chunk, so retrying a 4xx
+          // only wastes time- only transient failures are worth another go.
+          if (response.status < 500 || attempt >= MAX_CHUNK_RETRIES) throw new Error(payload.error || 'Upload failed.');
+        } catch (error) {
+          if (attempt >= MAX_CHUNK_RETRIES) throw error;
+        }
+        await new Promise((resolve) => window.setTimeout(resolve, 500 * attempt));
+      }
+    };
+
+    const chunkedUpload = async (files) => {
+      const meta = fields();
+      const init = await postJson('/upload/init', {
+        _csrf: csrf,
+        altcha: new FormData(form).get('altcha') || '',
+        files: files.map((f) => ({ mime: f.type, size: f.size })),
+      });
+
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+      let sentBytes = 0;
+      for (let i = 0; i < files.length; i += 1) {
+        const upload = init.uploads[i];
+        const current = files[i];
+        for (let index = 0; index < upload.totalChunks; index += 1) {
+          const start = index * init.chunkBytes;
+          const slice = current.slice(start, Math.min(start + init.chunkBytes, current.size));
+          await sendChunk(upload.id, index, slice);
+          sentBytes += slice.size;
+          say('Uploading… ' + Math.floor((sentBytes / totalBytes) * 100) + '%');
+        }
+      }
+
+      say('Processing…');
+      const done = await postJson('/upload/complete', {
+        _csrf: csrf,
+        ids: init.uploads.map((u) => u.id),
+        ...meta,
+      });
+      window.location.assign(done.redirect);
+    };
+
+    const directUpload = async () => {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        body: new FormData(form),
+        credentials: 'same-origin',
+        redirect: 'follow',
+      });
+      if (progress) progress.hidden = true;
+      if (response.redirected) {
+        window.location.assign(response.url);
+        return;
+      }
+      document.open();
+      document.write(await response.text());
+      document.close();
+    };
+
     form.addEventListener('submit', async (event) => {
       if (!file.files.length) return;
       event.preventDefault();
       button.disabled = true;
       button.textContent = 'Checking…';
-      if (progress) progress.hidden = false;
+      say('Uploading…');
+      const files = Array.from(file.files);
+      const needsChunking = CHUNK_ENABLED && files.some((f) => f.size > CHUNK_THRESHOLD);
       try {
-        const response = await fetch(form.action, {
-          method: 'POST',
-          body: new FormData(form),
-          credentials: 'same-origin',
-          redirect: 'follow',
-        });
-        if (progress) progress.hidden = true;
-        if (response.redirected) {
-          window.location.assign(response.url);
-          return;
-        }
-        document.open();
-        document.write(await response.text());
-        document.close();
-      } catch {
+        if (needsChunking) await chunkedUpload(files);
+        else await directUpload();
+      } catch (error) {
         if (progress) progress.hidden = true;
         button.disabled = false;
         button.textContent = 'Upload';
-        window.alert('Upload failed. Please try again.');
+        window.alert(error && error.message ? error.message : 'Upload failed. Please try again.');
       }
     });
     window.addEventListener('pageshow', resetUploadState);

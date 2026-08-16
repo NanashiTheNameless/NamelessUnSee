@@ -146,6 +146,11 @@ const limiters = {
   // Per-address only: the per-IP signup pressure is already handled by `signup`.
   signupEmail: createLimiter({ name: 'signup-email', windowMs: config.abuse.signupEmailWindowMs, max: config.abuse.signupEmailMax, by: 'custom', key: (req) => normalizeEmail(req.body && req.body.email), html: true }),
   upload: createLimiter({ name: 'upload', windowMs: rl.upload.windowMs, max: rl.upload.max, by: 'both', html: true }),
+  // Chunks need their own, far looser budget: one large file is many requests
+  // (a 4 GB upload at 95 MB is 44 of them), so counting them against `upload`
+  // would 429 a single legitimate upload. The strict limiter still guards
+  // /upload/init, which is what actually rations how many uploads may start.
+  uploadChunk: createLimiter({ name: 'upload-chunk', windowMs: rl.uploadChunk.windowMs, max: rl.uploadChunk.max, by: 'user', html: false }),
   view: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: true }),
   render: createLimiter({ name: 'view', windowMs: rl.view.windowMs, max: rl.view.max, by: 'ip', html: false }),
   telemetry: createLimiter({ name: 'telemetry', windowMs: rl.telemetry.windowMs, max: rl.telemetry.max, by: 'ip', html: false }),
