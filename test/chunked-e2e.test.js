@@ -81,6 +81,25 @@ before(async () => {
   assert.ok(csrf, 'csrf on dashboard');
 });
 
+test('dashboard: the upload script carries the CSP nonce and its chunk settings', async () => {
+  const response = await req('/dashboard');
+  const html = await response.text();
+  const csp = response.headers.get('content-security-policy') || '';
+
+  // Without a nonce the browser blocks the whole inline script under
+  // `script-src 'nonce-...'`, and the upload form silently falls back to a
+  // single native POST- which is exactly what chunking exists to avoid.
+  const scriptSrc = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src '));
+  assert.ok(scriptSrc, 'dashboard sets a script-src policy');
+  assert.ok(!scriptSrc.includes("'unsafe-inline'"), 'inline scripts are not blanket-allowed');
+  const nonce = scriptSrc.match(/'nonce-([^']+)'/)[1];
+  assert.ok(html.includes(`<script nonce="${nonce}">`), 'the inline upload script is nonced');
+
+  assert.match(html, /const CHUNK_THRESHOLD = \d+;/, 'chunk threshold rendered as a number');
+  assert.match(html, /const CHUNK_ENABLED = (true|false);/, 'chunking flag rendered as a boolean');
+  assert.ok(html.includes(`const CHUNK_THRESHOLD = ${config.chunkedUpload.chunkBytes};`), 'threshold matches config');
+});
+
 test('chunked upload: a multi-chunk file lands as one stored image', async () => {
   const png = await bigPng();
   assert.ok(png.length > config.chunkedUpload.chunkBytes, 'fixture must span multiple chunks');
