@@ -29,6 +29,9 @@ process.env.OPERATOR_CONTACT = 'operator@test.example';
 process.env.RENDER_CACHE_ENABLED = 'true';
 process.env.CHUNKED_UPLOAD_ENABLED = 'true';
 process.env.CLIENT_VIDEO_COMPRESS = 'true';
+// Video is off by default; this suite covers the video paths, so it opts in.
+// The disable test below overrides it back to false in its own app instance.
+process.env.VIDEO_UPLOADS_ENABLED = 'true';
 
 const { test, before } = require('node:test');
 const assert = require('node:assert');
