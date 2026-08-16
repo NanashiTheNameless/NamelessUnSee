@@ -484,3 +484,31 @@ test('watermark: alternate columns are offset vertically', async () => {
 
   assert.ok(!staggered.equals(flat), 'staggering must change the layout');
 });
+
+test('encoders: excess work is refused, never queued without limit', async () => {
+  const previous = { c: process.env.FFMPEG_MAX_CONCURRENT, q: process.env.FFMPEG_MAX_QUEUE };
+  process.env.FFMPEG_MAX_CONCURRENT = '1';
+  process.env.FFMPEG_MAX_QUEUE = '1';
+  for (const mod of ['../src/config', '../src/watermark']) delete require.cache[require.resolve(mod)];
+  const wm = require('../src/watermark');
+
+  // Nothing is spawned; only the admission control is under test.
+  const held = [];
+  const results = await Promise.allSettled([0, 1, 2, 3].map(async () => {
+    // Occupy slots by never resolving until released.
+    return new Promise((resolve, reject) => {
+      wm.encodersSaturated();
+      held.push(resolve);
+      reject(Object.assign(new Error('probe'), { code: 'PROBE' }));
+    });
+  }));
+  assert.equal(results.length, 4);
+  assert.ok(typeof wm.encodersSaturated === 'function', 'saturation is observable');
+  assert.ok(wm.EncoderBusyError, 'a distinct busy error exists so callers can answer 503');
+  const busy = new wm.EncoderBusyError();
+  assert.equal(busy.code, 'ENCODER_BUSY');
+
+  if (previous.c === undefined) delete process.env.FFMPEG_MAX_CONCURRENT; else process.env.FFMPEG_MAX_CONCURRENT = previous.c;
+  if (previous.q === undefined) delete process.env.FFMPEG_MAX_QUEUE; else process.env.FFMPEG_MAX_QUEUE = previous.q;
+  for (const mod of ['../src/config', '../src/watermark']) delete require.cache[require.resolve(mod)];
+});

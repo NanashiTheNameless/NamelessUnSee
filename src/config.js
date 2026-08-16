@@ -46,6 +46,12 @@ function urlList(v, fallback) {
   return String(raw).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
+function ffmpegConcurrencyDefault() {
+  const cores = Math.max(1, os.cpus().length);
+  // Keep a core for the server, and budget ~1.2 cores per concurrent encode.
+  return Math.max(1, Math.min(4, Math.floor((cores - 1) / 1.2)));
+}
+
 const DATA_DIR = path.resolve(process.env.DATA_DIR || './data');
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const REPORT_DIR = path.join(DATA_DIR, 'reports');
@@ -109,8 +115,22 @@ const config = {
   // viewers saturate the host. Cap both the threads per process and how many
   // encodes run at once.
   ffmpeg: {
-    threads: int(process.env.FFMPEG_THREADS, 2),
-    maxConcurrent: int(process.env.FFMPEG_MAX_CONCURRENT, 2),
+    // Defaults are derived from the host rather than fixed, so a small box is
+    // never sized like a large one. ffmpeg costs roughly 120% CPU per thread,
+    // and at least one core is always left for the server itself: video work
+    // must never be able to starve ordinary requests.
+    threads: int(process.env.FFMPEG_THREADS, 1),
+    maxConcurrent: int(process.env.FFMPEG_MAX_CONCURRENT, ffmpegConcurrencyDefault()),
+    // Encodes run at the lowest scheduler priority, so the event loop preempts
+    // them whenever a request needs the CPU. This is what keeps the site
+    // responsive while a video is being processed, rather than merely slow.
+    priority: int(process.env.FFMPEG_PRIORITY, 19),
+    // Work beyond this waits; work beyond the queue is refused outright. A
+    // request that will never be served in time is better answered now with a
+    // retry than left holding a connection.
+    maxQueue: int(process.env.FFMPEG_MAX_QUEUE, 12),
+    // A pathological file must not hold a slot forever.
+    timeoutSec: int(process.env.FFMPEG_TIMEOUT_SEC, 900),
     preset: String(process.env.FFMPEG_PRESET || 'veryfast').trim(),
     // Re-encode uploaded video once, at upload, into a canonical H.264/AAC mp4.
     // Per-view renders can then copy the audio untouched and skip format
@@ -129,6 +149,11 @@ const config = {
   // ffmpeg's default). At CRF 20, 1080p30 lands around 7 Mbps on high-motion
   // material, so VIDEO_MAX_BITRATE is a genuine ceiling rather than a formality.
   video: {
+    // Master switch. Video is by far the most expensive media this serves: every
+    // view re-encodes the whole file to burn in that viewer's watermark. Turn it
+    // off and uploads accept images only, which removes ffmpeg from the request
+    // path entirely.
+    uploadsEnabled: bool(process.env.VIDEO_UPLOADS_ENABLED, true),
     maxHeight: int(process.env.VIDEO_MAX_HEIGHT, 1080),
     maxFps: int(process.env.VIDEO_MAX_FPS, 30),
     crf: int(process.env.VIDEO_CRF, 20),

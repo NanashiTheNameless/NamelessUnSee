@@ -305,9 +305,16 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
         out = await watermark.renderWatermarked(materialized.path, lines, footerLines);
       }
     }
-  } catch {
+  } catch (error) {
     if (materialized) await materialized.cleanup();
     if (renderedVideo) fs.unlink(renderedVideo, () => {});
+    // Encoders saturated: say so and let the viewer retry, rather than holding
+    // the connection behind an unbounded queue. Images never reach ffmpeg, so
+    // they keep being served normally throughout.
+    if (error && error.code === 'ENCODER_BUSY') {
+      res.setHeader('Retry-After', '15');
+      return res.status(503).type('text').send('Busy rendering other videos. Please retry in a moment.');
+    }
     return res.status(500).end();
   }
   if (materialized) await materialized.cleanup();

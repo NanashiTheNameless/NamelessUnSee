@@ -26,7 +26,14 @@ function stagedPath(file) {
   return beneath(config.tempDir, file.filename);
 }
 
-const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg']);
+const IMAGE_MIME = ['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'];
+const VIDEO_MIME = ['video/mp4', 'video/webm', 'video/quicktime', 'video/ogg'];
+// Rejecting video here covers every upload path- multipart, chunked init, and
+// the type the client claims- because they all check this one set.
+const ALLOWED_MIME = new Set(config.video.uploadsEnabled ? [...IMAGE_MIME, ...VIDEO_MIME] : IMAGE_MIME);
+const ALLOWED_LABEL = config.video.uploadsEnabled
+  ? 'PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg'
+  : 'PNG, JPEG, WebP, GIF, AVIF';
 const EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif', 'image/avif': '.avif', 'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov', 'video/ogg': '.ogv' };
 
 const multerStorage = multer.diskStorage({
@@ -124,6 +131,12 @@ async function processStagedFile({ user, filePath, mimetype, size, retention }) 
   // itself still has to be burned per view- that is what makes a leaked copy
   // traceable- but this removes the format work from that hot path and lets it
   // copy the audio track untouched.
+  if (dims.mediaType === 'video' && !config.video.uploadsEnabled) {
+    // The declared type is the client's claim; this is the authoritative check,
+    // made after probing the actual bytes.
+    throw new Error('Video uploads are disabled on this instance.');
+  }
+
   let normalized = 0;
   let mediaPath = filePath;
   let storedSize = size;
@@ -239,6 +252,8 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     chunkBytes: config.chunkedUpload.chunkBytes,
     chunkThreshold: config.chunkedUpload.thresholdBytes,
     chunkParallel: config.chunkedUpload.parallel,
+    videoUploads: config.video.uploadsEnabled,
+    allowedLabel: ALLOWED_LABEL,
     imageMaxEdge: config.clientImage.maxEdge,
     imageQuality: config.clientImage.quality,
     imageReencodeAbove: config.clientImage.reencodeAboveBytes,
@@ -274,7 +289,7 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
       return res.status(403).render('error', { title: 'Forbidden', message: 'Invalid CSRF token. Please reload and try again.' });
     }
     if (!files.length) {
-      return res.status(400).render('error', { title: 'Upload error', message: 'No media files provided (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
+      return res.status(400).render('error', { title: 'Upload error', message: `No media files provided (allowed: ${ALLOWED_LABEL}).` });
     }
     if (!verifySolution(req.body.altcha)) {
       removeStaged();
@@ -315,7 +330,8 @@ router.post('/upload', requireAuth, limiters.upload, (req, res) => {
         await softDelete.run(Date.now(), image.id);
         storage.remove(image).catch(() => {});
       }
-      const message = error.message === 'That file is not a valid image or video.' ? error.message : 'The upload could not be stored.';
+      const passthrough = ['That file is not a valid image or video.', 'Video uploads are disabled on this instance.'];
+      const message = passthrough.includes(error.message) ? error.message : 'The upload could not be stored.';
       return res.status(400).render('error', { title: 'Upload error', message });
     }
 
@@ -369,7 +385,7 @@ router.post('/upload/init', requireAuth, limiters.upload, async (req, res) => {
     const size = Number(file && file.size);
     if (!Number.isInteger(size) || size <= 0) return res.status(400).json({ error: 'Invalid file size.' });
     if (!ALLOWED_MIME.has(file.mime)) {
-      return res.status(400).json({ error: 'Unsupported file type (allowed: PNG, JPEG, WebP, GIF, AVIF, MP4, WebM, MOV, Ogg).' });
+      return res.status(400).json({ error: `Unsupported file type (allowed: ${ALLOWED_LABEL}).` });
     }
     if (size > effective.uploadBytes || size > hardLimit) {
       return res.status(400).json({ error: `File too large (your limit is ${Math.round(effective.uploadBytes / (1024 * 1024))} MB per file).` });
@@ -461,7 +477,8 @@ router.post('/upload/complete', requireAuth, limiters.upload, async (req, res) =
       await softDelete.run(Date.now(), image.id);
       storage.remove(image).catch(() => {});
     }
-    const message = error.message === 'That file is not a valid image or video.' ? error.message : 'The upload could not be stored.';
+    const passthrough = ['That file is not a valid image or video.', 'Video uploads are disabled on this instance.'];
+    const message = passthrough.includes(error.message) ? error.message : 'The upload could not be stored.';
     return res.status(400).json({ error: message });
   }
 

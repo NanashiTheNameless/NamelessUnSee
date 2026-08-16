@@ -14,11 +14,27 @@ const config = require('./config');
 let activeEncodes = 0;
 const encodeQueue = [];
 
+class EncoderBusyError extends Error {
+  constructor() {
+    super('video encoders are busy');
+    this.code = 'ENCODER_BUSY';
+  }
+}
+
+/** True when another encode would have to be refused rather than queued. */
+function encodersSaturated() {
+  return encodeQueue.length >= config.ffmpeg.maxQueue;
+}
+
 function acquireEncodeSlot() {
   if (activeEncodes < config.ffmpeg.maxConcurrent) {
     activeEncodes += 1;
     return Promise.resolve();
   }
+  // Refuse rather than queue without limit. An unbounded queue turns a busy
+  // moment into every request hanging until it times out, which is exactly the
+  // failure this is meant to prevent.
+  if (encodersSaturated()) return Promise.reject(new EncoderBusyError());
   return new Promise((resolve) => encodeQueue.push(resolve));
 }
 
@@ -409,16 +425,59 @@ async function runFfmpegAccelerated(build) {
   return runFfmpeg(build(null));
 }
 
+/**
+ * Insert the thread limits as *output* options.
+ *
+ * Placement is not cosmetic: ffmpeg treats options before `-i` as input options,
+ * so a leading `-threads` only bounds the decoder and leaves libx264 free to use
+ * every core. Measured on a 4-core host, a leading flag gave 270% CPU against
+ * 282% with no flag at all- effectively nothing. Moved after the inputs it caps
+ * as intended, roughly 120% per configured thread.
+ *
+ * Every builder here puts the output path last, which is where these belong.
+ */
+function withThreadLimits(args) {
+  const threads = String(Math.max(1, config.ffmpeg.threads));
+  const output = args[args.length - 1];
+  return [
+    ...args.slice(0, -1),
+    '-threads', threads,
+    '-filter_threads', threads,
+    '-filter_complex_threads', threads,
+    output,
+  ];
+}
+
 async function runFfmpeg(args) {
-  await acquireEncodeSlot();
+  await acquireEncodeSlot(); // throws EncoderBusyError when saturated
   try {
     return await new Promise((resolve, reject) => {
       // -threads bounds this process; the queue above bounds how many run.
-      const child = spawn('ffmpeg', ['-threads', String(config.ffmpeg.threads), ...args], { stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn('ffmpeg', withThreadLimits(args), { stdio: ['ignore', 'ignore', 'pipe'] });
+
+      // Lowest scheduler priority: the OS hands the CPU back to the event loop
+      // the moment a request needs it, so encoding slows down instead of the
+      // site going unresponsive. Best effort- some platforms and sandboxes
+      // refuse, and that must not fail the encode.
+      try {
+        os.setPriority(child.pid, config.ffmpeg.priority);
+      } catch { /* priority is an optimisation, not a requirement */ }
+
       let stderr = '';
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, Math.max(1, config.ffmpeg.timeoutSec) * 1000);
+      timer.unref();
+
       child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-      child.on('error', reject);
-      child.on('close', (code) => code === 0 ? resolve() : reject(new Error(stderr.slice(-1000))));
+      child.on('error', (err) => { clearTimeout(timer); reject(err); });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (timedOut) return reject(new Error(`ffmpeg exceeded ${config.ffmpeg.timeoutSec}s and was stopped`));
+        return code === 0 ? resolve() : reject(new Error(stderr.slice(-1000)));
+      });
     });
   } finally {
     releaseEncodeSlot();
@@ -544,4 +603,4 @@ async function transcodeVideo(originalPath, outputPath) {
 // rather than make the first viewer wait for it.
 function warmHardwareProbe() { return hardwareEncoder(); }
 
-module.exports = { warmHardwareProbe, renderWatermarked, renderWatermarkedVideo, transcodeVideo, probe, buildOverlaySvg, buildMarkSvg, buildMarkStamp, buildMarkPeriod, buildBannerSvg, buildOverlayBitmap };
+module.exports = { warmHardwareProbe, encodersSaturated, EncoderBusyError, renderWatermarked, renderWatermarkedVideo, transcodeVideo, probe, buildOverlaySvg, buildMarkSvg, buildMarkStamp, buildMarkPeriod, buildBannerSvg, buildOverlayBitmap };

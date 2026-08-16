@@ -88,12 +88,13 @@
   <div class="card">
     <h2 style="margin-top:0">All accounts <span class="muted">(<%= users.length %>)</span></h2>
     <div class="scroll"><table>
-      <thead><tr><th>Username</th><th>Email</th><th>UUID</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
+      <thead><tr><th>Username</th><th>Email</th><th>Why they joined</th><th>UUID</th><th>Role</th><th>Status</th><th>Actions</th></tr></thead>
       <tbody>
       <% users.forEach(function(u){ %>
         <tr>
           <td class="mono"><%= u.username %><%= u.id === me.id ? ' (you)' : '' %><br><a href="/admin/users/<%= u.id %>/files">Files</a></td>
           <td class="mono"><%= u.email %></td>
+          <td style="white-space:pre-wrap; max-width:26rem"><%= u.signup_reason || '' %><% if (!u.signup_reason) { %><span class="muted">(not provided)</span><% } %></td>
           <td class="mono"><%= u.id %></td>
           <td><span class="pill <%= u.role === 'admin' ? 'admin' : '' %>"><%= u.role %></span><br><span class="pill"><%= u.rank %></span></td>
           <td>

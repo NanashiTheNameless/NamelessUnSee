@@ -373,3 +373,43 @@ test('chunked upload: concurrent, out-of-order chunks reassemble correctly', asy
   assert.equal(row.width, 900, 'and it is still a decodable image');
   assert.equal(row.height, 900);
 });
+
+test('video uploads can be disabled entirely', async () => {
+  // Reload config and routes with video off, in an isolated app instance.
+  const previous = process.env.VIDEO_UPLOADS_ENABLED;
+  process.env.VIDEO_UPLOADS_ENABLED = 'false';
+  for (const mod of ['../src/config', '../src/routes/upload', '../src/server', '../src/watermark']) {
+    delete require.cache[require.resolve(mod)];
+  }
+  const noVideoConfig = require('../src/config');
+  assert.equal(noVideoConfig.video.uploadsEnabled, false);
+
+  // The allow-list is what every upload path checks, so a video type is refused
+  // at init before a single byte is staged.
+  const noVideoApp = require('../src/server');
+  const jar2 = newJar();
+  const req2 = makeReq(noVideoApp, jar2);
+  await consent(req2, '/');
+  const sol = await solveAltcha(req2);
+  await req2('/login', form({ identifier: 'chunker', password: 'password1234', altcha: sol, next: '/dashboard' }));
+  const dash = await (await req2('/dashboard')).text();
+  const csrf2 = csrfFrom(dash);
+
+  if (csrf2) {
+    const rejected = await req2('/upload/init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ _csrf: csrf2, altcha: await solveAltcha(req2), files: [{ mime: 'video/mp4', size: 1024 }] }),
+    });
+    assert.equal(rejected.status, 400, 'a video upload is refused');
+    assert.match((await rejected.json()).error, /Unsupported file type/);
+    assert.ok(!dash.includes('video/mp4'), 'the file picker no longer offers video');
+    assert.ok(!dash.includes('/video-compress.js'), 'the video compressor is not loaded');
+  }
+
+  if (previous === undefined) delete process.env.VIDEO_UPLOADS_ENABLED;
+  else process.env.VIDEO_UPLOADS_ENABLED = previous;
+  for (const mod of ['../src/config', '../src/routes/upload', '../src/server', '../src/watermark']) {
+    delete require.cache[require.resolve(mod)];
+  }
+});

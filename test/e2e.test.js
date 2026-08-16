@@ -339,6 +339,18 @@ test('admin: seed via DB, ban (view) blocks service-wide, audit recorded', async
   assert.ok(csrf, 'admin page + csrf');
   assert.ok(/Leak reports/.test(adminHtml), 'admin sees leak reports');
 
+  // The all-accounts table carries each user's stated reason for joining, not
+  // just the pending queue: once someone is approved the reason is still the
+  // only record of why, and an admin reviewing an existing account needs it.
+  // The account list is its own section, not part of the default page.
+  const usersHtml = await (await req('/admin/users')).text();
+  assert.ok(/All accounts/.test(usersHtml), 'admin sees the account list');
+  assert.ok(/<th>Why they joined<\/th>/.test(usersHtml), 'account list has a joining-reason column');
+  const firstUserReason = db.prepare("SELECT signup_reason FROM users WHERE username = 'firstuser'").get().signup_reason;
+  assert.ok(firstUserReason, 'fixture user has a stated reason');
+  const accountsTable = usersHtml.slice(usersHtml.indexOf('All accounts'));
+  assert.ok(accountsTable.includes(firstUserReason), 'the reason is rendered in the account list');
+
   const targetUser = db.prepare("SELECT id FROM users WHERE username = 'firstuser'").get();
   const targetImage = db.prepare('SELECT token FROM images WHERE owner_id = ? AND deleted_at IS NULL ORDER BY id DESC').get(targetUser.id);
   const accessLogCount = db.prepare('SELECT COUNT(*) AS n FROM access_logs WHERE image_id = (SELECT id FROM images WHERE token = ?)').get(targetImage.token).n;
