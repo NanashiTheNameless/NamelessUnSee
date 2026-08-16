@@ -5,6 +5,19 @@ process.env.COOKIE_SECRET = 'test-' + 'x'.repeat(40);
 process.env.DATA_DIR = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'nus-chunk-'));
 process.env.STORAGE_BACKEND = 'local';
 process.env.UPLOAD_CHUNK_MB = '1';
+// Pinned so a local .env cannot change what these assert (see chunked-e2e).
+process.env.UPLOAD_CHUNK_THRESHOLD_MB = '1';
+process.env.UPLOAD_SESSION_TTL_MIN = '60';
+process.env.RENDER_CACHE_ENABLED = 'true';
+process.env.RENDER_CACHE_TTL_SEC = '300';
+process.env.RENDER_CACHE_MAX_ENTRY_MB = '512';
+process.env.RENDER_CACHE_MAX_TOTAL_MB = '2048';
+process.env.WATERMARK_TILE_SPACING = '1.02';
+process.env.WATERMARK_TILE_PADDING = '20';
+process.env.WATERMARK_STAGGER = '0.5';
+process.env.VIDEO_MAX_HEIGHT = '1080';
+process.env.VIDEO_MAX_FPS = '30';
+process.env.FFMPEG_HWACCEL = 'off'; // deterministic timings, no GPU dependency
 
 const { test } = require('node:test');
 const assert = require('node:assert');

@@ -20,6 +20,15 @@ process.env.TWOFA_ENABLED = 'false';
 process.env.RESEND_API_KEY = '';
 process.env.EMAIL_DOMAIN_ALLOWLIST_ENABLED = 'false';
 process.env.UPLOAD_CHUNK_MB = '1'; // force a real multi-chunk upload
+process.env.UPLOAD_CHUNK_THRESHOLD_MB = '1';
+// Pinned rather than inherited: config.js loads .env when one exists, so a
+// developer's local file silently changed what these tests asserted. The
+// obfuscated-contact script only renders when a contact is configured, which
+// is why this suite passed locally and failed in CI.
+process.env.OPERATOR_CONTACT = 'operator@test.example';
+process.env.RENDER_CACHE_ENABLED = 'true';
+process.env.CHUNKED_UPLOAD_ENABLED = 'true';
+process.env.CLIENT_VIDEO_COMPRESS = 'true';
 
 const { test, before } = require('node:test');
 const assert = require('node:assert');
