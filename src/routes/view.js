@@ -6,6 +6,7 @@ const express = require('express');
 const { getDatabase } = require('../db-runtime');
 const config = require('../config');
 const watermark = require('../watermark');
+const renderCache = require('../render-cache');
 const logging = require('../logging');
 const ipintel = require('../ipintel');
 const { limiters } = require('../ratelimit');
@@ -283,23 +284,33 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
     `Ref ${img.token}${viewId ? '/' + viewId.slice(0, 8) : ''}${linkLabel ? ' via ' + linkLabel : ''}`,
   ].filter((l) => l && l.trim());
 
+  const isVideo = !!(img.mime && img.mime.startsWith('video/'));
+  // Bound to this viewer's identity, not just the view id: a cached render
+  // carries their IP and device, so it must never be served to anyone else.
+  const cacheKey = isVideo
+    ? renderCache.keyFor({ imageToken: img.token, viewId, identity: { ...identity, linkLabel } })
+    : null;
+
   let out;
   let materialized;
   let renderedVideo;
+  let cached = cacheKey ? renderCache.get(cacheKey) : null;
   try {
-    materialized = await storage.materialize(img);
-    if (img.mime && img.mime.startsWith('video/')) {
-      renderedVideo = path.join(config.tempDir, `render-${img.token}-${Date.now()}.mp4`);
-      await watermark.renderWatermarkedVideo(materialized.path, renderedVideo, img.width, img.height, lines, footerLines);
-    } else {
-      out = await watermark.renderWatermarked(materialized.path, lines, footerLines);
+    if (!cached) {
+      materialized = await storage.materialize(img);
+      if (isVideo) {
+        renderedVideo = path.join(config.tempDir, `render-${img.token}-${Date.now()}.mp4`);
+        await watermark.renderWatermarkedVideo(materialized.path, renderedVideo, img.width, img.height, lines, footerLines, !!img.video_normalized);
+      } else {
+        out = await watermark.renderWatermarked(materialized.path, lines, footerLines);
+      }
     }
   } catch {
     if (materialized) await materialized.cleanup();
     if (renderedVideo) fs.unlink(renderedVideo, () => {});
     return res.status(500).end();
   }
-  await materialized.cleanup();
+  if (materialized) await materialized.cleanup();
 
   // Consume the recipient link only after a successful render, atomically- if
   // two requests race a one-time link, exactly one gets the bytes. Replays of
@@ -315,16 +326,33 @@ router.get(['/i/:token/render.png', '/i/:token/render.mp4', '/r/:token/render.pn
     if (!isReplay) await accountView(img);
   } catch { /* non-fatal */ }
 
-  // Never cache: every delivery is a fresh, per-viewer watermarked render.
-  if (renderedVideo) {
+  // The cache owns the file once adopted, so the response streams the cached
+  // copy and must not delete it; an un-cached render is still cleaned up.
+  let servePath = cached;
+  let deleteAfterSend = false;
+  if (!cached && renderedVideo) {
+    servePath = cacheKey ? await renderCache.put(cacheKey, renderedVideo) : renderedVideo;
+    deleteAfterSend = servePath === renderedVideo;
+  }
+
+  // Never cached by the browser: every delivery is a per-viewer render.
+  if (servePath) {
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `inline; filename="${servedFilename(identity.ip, Date.now(), 'mp4')}"`);
-    res.setHeader('Content-Length', String(fs.statSync(renderedVideo).size));
+    let size;
+    try {
+      size = (await fs.promises.stat(servePath)).size;
+    } catch {
+      return res.status(500).end();
+    }
+    res.setHeader('Content-Length', String(size));
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-    const stream = fs.createReadStream(renderedVideo);
-    const cleanup = () => fs.unlink(renderedVideo, () => {});
-    stream.on('close', cleanup);
-    stream.on('error', cleanup);
+    const stream = fs.createReadStream(servePath);
+    if (deleteAfterSend) {
+      const cleanup = () => fs.unlink(servePath, () => {});
+      stream.on('close', cleanup);
+      stream.on('error', cleanup);
+    }
     return stream.pipe(res);
   }
   res.setHeader('Content-Type', 'image/png');

@@ -87,11 +87,107 @@ const config = {
   // also keeps each request short enough to stay under proxy read timeouts.
   chunkedUpload: {
     enabled: bool(process.env.CHUNKED_UPLOAD_ENABLED, true),
-    chunkBytes: int(process.env.UPLOAD_CHUNK_MB, 95) * 1024 * 1024,
+    // Two separate numbers, deliberately:
+    //   thresholdBytes - the proxy's request-body limit. Files at or under it
+    //     go as one ordinary post, exactly as before.
+    //   chunkBytes - the slice size once chunking kicks in. Smaller than the
+    //     threshold so several slices can be in flight at once without their
+    //     buffered bodies multiplying peak memory.
+    thresholdBytes: int(process.env.UPLOAD_CHUNK_THRESHOLD_MB, 95) * 1024 * 1024,
+    chunkBytes: int(process.env.UPLOAD_CHUNK_MB, 24) * 1024 * 1024,
+    // Each in-flight chunk is buffered whole in memory, so peak usage per
+    // uploader is roughly chunkBytes x parallel. 24 MB x 4 costs about what a
+    // single 95 MB chunk did, with four times the data in flight.
+    parallel: Math.max(1, int(process.env.UPLOAD_PARALLEL_CHUNKS, 4)),
     // How long a partially uploaded file may sit before its chunks are swept.
     sessionTtlMs: int(process.env.UPLOAD_SESSION_TTL_MIN, 60) * 60 * 1000,
   },
   maxStorageBytes: int(process.env.MAX_STORAGE_MB, 1024) * 1024 * 1024,
+  // ffmpeg is by far the largest CPU consumer here: every video view burns a
+  // per-viewer watermark into the frames, which means a full re-encode. Left to
+  // its defaults ffmpeg takes every core it can see, so a couple of concurrent
+  // viewers saturate the host. Cap both the threads per process and how many
+  // encodes run at once.
+  ffmpeg: {
+    threads: int(process.env.FFMPEG_THREADS, 2),
+    maxConcurrent: int(process.env.FFMPEG_MAX_CONCURRENT, 2),
+    preset: String(process.env.FFMPEG_PRESET || 'veryfast').trim(),
+    // Re-encode uploaded video once, at upload, into a canonical H.264/AAC mp4.
+    // Per-view renders can then copy the audio untouched and skip format
+    // guesswork, instead of redoing that work for every single viewer.
+    normalizeOnUpload: bool(process.env.VIDEO_NORMALIZE_ON_UPLOAD, true),
+    // Hardware encoding takes the per-view re-encode largely off the CPU, which
+    // is the only thing that removes the CPU floor rather than merely capping
+    // it. 'auto' uses it when the render device and encoder are both present
+    // and silently falls back to libx264 otherwise; 'off' never tries.
+    hwaccel: String(process.env.FFMPEG_HWACCEL || 'auto').trim().toLowerCase(),
+    vaapiDevice: String(process.env.FFMPEG_VAAPI_DEVICE || '/dev/dri/renderD128').trim(),
+  },
+  // Quality ceiling for stored video. Uploads are capped once, at upload, so
+  // neither storage nor the per-view re-encode ever pays for 4K60 source
+  // material. CRF is the quality knob: lower is better and bigger (23 is
+  // ffmpeg's default). At CRF 20, 1080p30 lands around 7 Mbps on high-motion
+  // material, so VIDEO_MAX_BITRATE is a genuine ceiling rather than a formality.
+  video: {
+    maxHeight: int(process.env.VIDEO_MAX_HEIGHT, 1080),
+    maxFps: int(process.env.VIDEO_MAX_FPS, 30),
+    crf: int(process.env.VIDEO_CRF, 20),
+    // Quality of the per-view watermarked render. Separate from the stored
+    // copy: that one is the master and is kept pristine, while this is a
+    // transient delivery re-encoded on every single view. Raising it is the
+    // cheapest way to cut view-time CPU and bandwidth.
+    viewCrf: int(process.env.VIDEO_VIEW_CRF, int(process.env.VIDEO_CRF, 20)),
+    maxrate: String(process.env.VIDEO_MAX_BITRATE || '6000k').trim(),
+    audioBitrate: String(process.env.VIDEO_AUDIO_BITRATE || '128k').trim(),
+  },
+  // Watermark tile spacing. The identity mark repeats across the image on a
+  // grid; this scales the gap between repetitions. 1.0 packs them flush, higher
+  // spreads them out. Tighter means denser coverage but more of each mark
+  // clipped at the tile edge, since the rotated text is wider than its slot.
+  watermark: {
+    tileSpacing: float(process.env.WATERMARK_TILE_SPACING, 1.02),
+    tilePadding: int(process.env.WATERMARK_TILE_PADDING, 20),
+    // Every other column is dropped by this fraction of the vertical step. The
+    // mark is tilted, so neighbours collide along that diagonal; offsetting
+    // down the columns breaks up the line where one mark's tail meets the next
+    // one's head. 0 disables the offset.
+    stagger: float(process.env.WATERMARK_STAGGER, 0.5),
+  },
+  // Short-lived cache of rendered video, so a viewer seeking or reloading does
+  // not trigger a fresh re-encode of the whole file for each request. Entries
+  // are bound to the viewer they were rendered for- see src/render-cache.js.
+  renderCache: {
+    enabled: bool(process.env.RENDER_CACHE_ENABLED, true),
+    ttlMs: int(process.env.RENDER_CACHE_TTL_SEC, 300) * 1000,
+    maxEntryBytes: int(process.env.RENDER_CACHE_MAX_ENTRY_MB, 512) * 1024 * 1024,
+    maxTotalBytes: int(process.env.RENDER_CACHE_MAX_TOTAL_MB, 2048) * 1024 * 1024,
+  },
+  // Client-side image shrinking before upload. Purely an optimisation: the
+  // server re-probes, moderates and watermarks whatever arrives regardless, so
+  // a client that ignores or subverts this gains nothing.
+  //
+  // The default caps the longest edge at 1920, matching the 1080p ceiling the
+  // server applies to video, so nothing above 1080p-class resolution is ever
+  // sent. Sources already smaller are never upscaled.
+  clientImage: {
+    maxEdge: int(process.env.CLIENT_IMAGE_MAX_EDGE, 1920),
+    quality: Number(process.env.CLIENT_IMAGE_QUALITY || 0.82),
+    // An image already within the size cap is only re-encoded when it is also
+    // bulky enough for the re-encode to be worth it.
+    reencodeAboveBytes: int(process.env.CLIENT_IMAGE_REENCODE_ABOVE_KB, 2048) * 1024,
+  },
+  // Client-side video compression before upload, using WebCodecs. Same standing
+  // as the image path: an optimisation the server never trusts. It downscales
+  // to the same ceiling the server would apply anyway, so the bytes are shrunk
+  // before they cross the network instead of after. Audio is remuxed untouched;
+  // anything the browser cannot handle is uploaded as-is and normalised
+  // server-side exactly as before.
+  clientVideo: {
+    enabled: bool(process.env.CLIENT_VIDEO_COMPRESS, true),
+    maxHeight: int(process.env.CLIENT_VIDEO_MAX_HEIGHT, int(process.env.VIDEO_MAX_HEIGHT, 1080)),
+    maxFps: int(process.env.CLIENT_VIDEO_MAX_FPS, int(process.env.VIDEO_MAX_FPS, 30)),
+    bitrate: int(process.env.CLIENT_VIDEO_BITRATE_KBPS, 6000) * 1000,
+  },
   storage: {
     // 'local', Cloudflare R2, or another S3-compatible object store.
     backend: String(process.env.STORAGE_BACKEND || 'local').split('#')[0].trim().toLowerCase(),

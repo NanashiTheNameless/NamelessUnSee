@@ -72,7 +72,7 @@ test('operator contact is obfuscated, never sent as clear text', async () => {
     if (contact) {
       assert.ok(!html.includes(contact), `${p} does not leak the contact address`);
       assert.ok(html.includes('data-obfuscated-email='), `${p} carries the obfuscated payload`);
-      assert.ok(html.includes('/altcha-obfuscation.min.js'), `${p} loads the obfuscation module`);
+      assert.ok(html.includes('/vendor/altcha-obfuscation.min.js'), `${p} loads the obfuscation module`);
       // The payload decodes to the ALTCHA Obfuscation format, not the address.
       const payload = html.match(/data-obfuscated-email="([^"]+)"/)[1];
       const parsed = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
@@ -82,7 +82,7 @@ test('operator contact is obfuscated, never sent as clear text', async () => {
       assert.ok(!html.includes('data-obfuscated-email='), `${p} omits the reveal when no contact is set`);
     }
   }
-  for (const asset of ['/altcha-obfuscation.min.js', '/email-reveal.js']) {
+  for (const asset of ['/vendor/altcha-obfuscation.min.js', '/email-reveal.js']) {
     assert.equal((await req(asset)).status, 200, `GET ${asset}`);
   }
 });

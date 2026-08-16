@@ -338,6 +338,10 @@ addColumn('images', 'moderation_status', "moderation_status TEXT NOT NULL DEFAUL
 addColumn('images', 'moderation_reason', 'moderation_reason TEXT');
 addColumn('images', 'moderation_score', 'moderation_score REAL');
 addColumn('images', 'moderation_details', 'moderation_details TEXT');
+// Set when the upload was re-encoded to canonical H.264/AAC at upload time.
+// Per-view renders can then copy the audio instead of re-encoding it. Existing
+// rows stay 0 and keep taking the slower path, which is still correct.
+addColumn('images', 'video_normalized', 'video_normalized INTEGER NOT NULL DEFAULT 0');
 addColumn('access_logs', 'link_label', 'link_label TEXT');
 addColumn('access_logs', 'blocked_reason', 'blocked_reason TEXT');
 addColumn('access_logs', 'attempts', 'attempts INTEGER NOT NULL DEFAULT 1');

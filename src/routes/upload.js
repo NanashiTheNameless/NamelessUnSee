@@ -52,11 +52,11 @@ const insertImage = statement(
   `INSERT INTO images
      (token, owner_id, storage_name, mime, width, height, byte_size, title, created_at,
      ttl_seconds, timer_start, max_views, expires_at,
-      phash, moderation_status, moderation_reason, moderation_score, moderation_details, storage_backend, storage_encrypted)
+      phash, moderation_status, moderation_reason, moderation_score, moderation_details, storage_backend, storage_encrypted, video_normalized)
    VALUES
      (@token, @owner_id, @storage_name, @mime, @width, @height, @byte_size, @title, @created_at,
       @ttl_seconds, @timer_start, @max_views, @expires_at,
-      @phash, @moderation_status, @moderation_reason, @moderation_score, @moderation_details, @storage_backend, @storage_encrypted)`
+      @phash, @moderation_status, @moderation_reason, @moderation_score, @moderation_details, @storage_backend, @storage_encrypted, @video_normalized)`
 );
 
 // Allowed retention presets (label -> seconds; null = keep until views run out / manual delete).
@@ -119,6 +119,35 @@ async function processStagedFile({ user, filePath, mimetype, size, retention }) 
     throw new Error('That file is not a valid image or video.');
   }
 
+  // Canonicalise video once, here, rather than making every viewer's render
+  // cope with whatever container and codec arrived. The per-viewer watermark
+  // itself still has to be burned per view- that is what makes a leaked copy
+  // traceable- but this removes the format work from that hot path and lets it
+  // copy the audio track untouched.
+  let normalized = 0;
+  let mediaPath = filePath;
+  let storedSize = size;
+  if (dims.mediaType === 'video' && config.ffmpeg.normalizeOnUpload) {
+    const normalizedPath = beneath(config.tempDir, randomToken(20) + '.mp4');
+    try {
+      await watermark.transcodeVideo(filePath, normalizedPath);
+      fs.unlink(filePath, () => {});
+      mediaPath = normalizedPath;
+      normalized = 1;
+      storedSize = (await fs.promises.stat(normalizedPath)).size;
+      mimetype = 'video/mp4';
+      // Normalisation caps resolution, so the stored dimensions are the ones
+      // after the cap- the watermark overlay is built from these columns and
+      // would be the wrong size otherwise.
+      dims = await watermark.probe(normalizedPath);
+    } catch (error) {
+      // A normalisation failure must not lose the upload: keep the original
+      // bytes and let each view re-encode from them as before.
+      console.warn('[NamelessUnSee] video normalisation failed, storing the original:', error.message);
+      fs.unlink(normalizedPath, () => {});
+    }
+  }
+
   const now = Date.now();
   const expiresAt = retention.timerStart === 'upload' && retention.ttlSeconds
     ? now + retention.ttlSeconds * 1000
@@ -127,7 +156,7 @@ async function processStagedFile({ user, filePath, mimetype, size, retention }) 
   let mod = { status: 'ok', reason: null, score: null, phash: null };
   if (ranks.shouldScan(user)) {
     try {
-      mod = await moderation.scan(filePath);
+      mod = await moderation.scan(mediaPath);
     } catch (error) {
       console.warn('[NamelessUnSee] moderation scan failed:', error.message);
       if (config.moderation.enabled && config.moderation.nsfw.enabled && config.moderation.nsfw.failClosed) {
@@ -141,19 +170,20 @@ async function processStagedFile({ user, filePath, mimetype, size, retention }) 
   const date = new Date(now);
   const datePart = [date.getMonth() + 1, date.getDate(), date.getFullYear()].map((v) => String(v).padStart(2, '0')).join('.');
   const storageName = `upload/${user.id}/${mediaDir}/${datePart}_${now}_${token}${EXT[mimetype] || '.bin'}`;
-  const stored = await storage.put(filePath, storageName);
-  fs.unlink(filePath, () => {});
+  const stored = await storage.put(mediaPath, storageName);
+  fs.unlink(mediaPath, () => {});
 
   let image;
   try {
     const info = await insertImage.run({
       token, owner_id: user.id, storage_name: stored.storage_name, mime: mimetype,
-      width: dims.width, height: dims.height, byte_size: size, title: retention.title, created_at: now,
+      width: dims.width, height: dims.height, byte_size: storedSize, title: retention.title, created_at: now,
       ttl_seconds: retention.ttlSeconds, timer_start: retention.timerStart, max_views: retention.maxViews,
       expires_at: expiresAt,
       phash: mod.phash, moderation_status: mod.status, moderation_reason: mod.reason,
       moderation_score: mod.score, moderation_details: mod.details ? JSON.stringify(mod.details) : null,
       storage_backend: stored.storage_backend, storage_encrypted: stored.storage_encrypted,
+      video_normalized: normalized,
     });
     image = await statement('SELECT * FROM images WHERE id = ?').get(info.lastInsertRowid);
   } catch (error) {
@@ -207,6 +237,15 @@ router.get('/dashboard', requireAuth, async (req, res) => {
     defaults,
     chunkedUploads: config.chunkedUpload.enabled,
     chunkBytes: config.chunkedUpload.chunkBytes,
+    chunkThreshold: config.chunkedUpload.thresholdBytes,
+    chunkParallel: config.chunkedUpload.parallel,
+    imageMaxEdge: config.clientImage.maxEdge,
+    imageQuality: config.clientImage.quality,
+    imageReencodeAbove: config.clientImage.reencodeAboveBytes,
+    clientVideo: config.clientVideo.enabled,
+    clientVideoMaxHeight: config.clientVideo.maxHeight,
+    clientVideoMaxFps: config.clientVideo.maxFps,
+    clientVideoBitrate: config.clientVideo.bitrate,
     notice: req.query.uploaded ? 'Image uploaded.' : null,
     flagged: !!req.query.flagged,
     gallery: req.query.gallery || null,

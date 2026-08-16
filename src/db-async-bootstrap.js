@@ -12,7 +12,9 @@ async function bootstrapAsyncDatabase(db) {
     ['users', 'last_ip TEXT'], ['users', 'trust_until INTEGER'],
     ['images', 'phash TEXT'], ['images', "moderation_status TEXT NOT NULL DEFAULT 'ok'"],
     ['images', 'moderation_reason TEXT'], ['images', 'moderation_score REAL'],
-    ['images', 'moderation_details TEXT'], ['access_logs', 'link_label TEXT'],
+    ['images', 'moderation_details TEXT'],
+    ['images', 'video_normalized INTEGER NOT NULL DEFAULT 0'],
+    ['access_logs', 'link_label TEXT'],
     ['access_logs', 'blocked_reason TEXT'], ['access_logs', 'attempts INTEGER NOT NULL DEFAULT 1'],
     ['leak_reports', 'access_log_id INTEGER REFERENCES access_logs(id)'],
   ];

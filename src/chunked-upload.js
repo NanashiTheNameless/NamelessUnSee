@@ -85,13 +85,24 @@ async function writeChunk(session, index, buffer) {
 
   // A retried chunk replaces the previous copy rather than adding to the total.
   const previous = session.received.get(index) || 0;
-  if (session.bytes - previous + buffer.length > session.size) {
-    throw new Error('upload exceeds declared size');
-  }
+  const total = session.bytes - previous + buffer.length;
+  if (total > session.size) throw new Error('upload exceeds declared size');
 
-  await fs.promises.writeFile(chunkPath(session.id, index), buffer, { mode: 0o600 });
-  session.bytes = session.bytes - previous + buffer.length;
+  // Reserve the budget *before* awaiting the write. Nothing serialises these
+  // calls- a client is free to post several chunks at once- so checking and
+  // then committing after the await lets concurrent chunks all read the same
+  // stale total and every one of them pass a check that only one should.
+  session.bytes = total;
   session.received.set(index, buffer.length);
+  try {
+    await fs.promises.writeFile(chunkPath(session.id, index), buffer, { mode: 0o600 });
+  } catch (error) {
+    // Hand the reservation back so a failed write does not consume budget.
+    session.bytes -= buffer.length - previous;
+    if (previous) session.received.set(index, previous);
+    else session.received.delete(index);
+    throw error;
+  }
   return { received: session.received.size, total: session.totalChunks, bytes: session.bytes };
 }
 
@@ -106,26 +117,26 @@ function isComplete(session) {
 async function assemble(session) {
   if (!isComplete(session)) throw new Error('upload is incomplete');
   const target = beneath(config.tempDir, randomToken(20) + session.ext);
-  const out = fs.createWriteStream(target, { mode: 0o600 });
+  // A file handle rather than a write stream: piping N chunks into one shared
+  // stream stacks listeners on it per chunk (pipeline included), and a 4 GB
+  // upload is ~44 chunks- well past Node's MaxListeners threshold. Reading each
+  // chunk by async iteration keeps memory flat without any shared emitter.
+  const handle = await fs.promises.open(target, 'w', 0o600);
   try {
     for (let i = 0; i < session.totalChunks; i += 1) {
-      const part = chunkPath(session.id, i);
-      await new Promise((resolve, reject) => {
-        const input = fs.createReadStream(part);
-        input.on('error', reject);
-        out.on('error', reject);
-        input.on('end', resolve);
-        input.pipe(out, { end: false });
-      });
+      const input = fs.createReadStream(chunkPath(session.id, i));
+      try {
+        for await (const buffer of input) await handle.write(buffer);
+      } finally {
+        input.destroy();
+      }
     }
-    await new Promise((resolve, reject) => {
-      out.end((err) => (err ? reject(err) : resolve()));
-    });
   } catch (error) {
-    out.destroy();
+    await handle.close().catch(() => {});
     fs.unlink(target, () => {});
     throw error;
   }
+  await handle.close();
   session.done = true;
   discard(session);
   return target;

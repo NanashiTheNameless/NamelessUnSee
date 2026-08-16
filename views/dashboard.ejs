@@ -55,9 +55,19 @@
       <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="timer_start" value="first_view" <%= defaults.default_timer_start === 'first_view' ? 'checked' : '' %> style="width:auto"> When the image is first viewed</label>
       <label class="muted" style="font-weight:400; margin:.2rem 0"><input type="radio" name="timer_start" value="upload" <%= defaults.default_timer_start === 'upload' ? 'checked' : '' %> style="width:auto"> Immediately on upload</label>
 
+      <% if (clientVideo) { %><script src="/video-compress.js" defer></script><% } %>
       <%- include('partials/altcha-widget') %>
       <p style="margin-top:1.1rem"><button id="upload-submit" class="btn" type="submit">Upload</button></p>
-      <div id="progress" class="muted" hidden style="margin-top:.4rem">Uploading…</div>
+      <div id="progress" class="progress" hidden>
+        <div id="progress-track" class="progress-track">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+        <p class="progress-text">
+          <span id="progress-label">Uploading…</span>
+          <span id="progress-percent" class="mono progress-percent">0%</span>
+        </p>
+        <p class="muted progress-text"><span id="progress-detail" class="mono"></span></p>
+      </div>
     </form>
   </div>
 
@@ -162,10 +172,14 @@
     const file = document.getElementById('image');
     const button = document.getElementById('upload-submit');
     const progress = document.getElementById('progress');
+    // Back/forward cache restores the page mid-upload state; clear it.
     const resetUploadState = () => {
       button.disabled = false;
       button.textContent = 'Upload';
-      if (progress) progress.hidden = true;
+      const bfProgress = document.getElementById('progress');
+      const bfBar = document.getElementById('progress-bar');
+      if (bfProgress) bfProgress.hidden = true;
+      if (bfBar) bfBar.style.width = '0%';
     };
     if (!form || !file || !button) return;
 
@@ -173,7 +187,11 @@
     const csrf = form.querySelector('input[name="_csrf"]').value;
     // Anything at or below this goes as one ordinary multipart post; above it,
     // the file is sliced so no single request hits the proxy's body limit.
-    const CHUNK_THRESHOLD = <%= chunkBytes %>;
+    const CHUNK_THRESHOLD = <%= chunkThreshold %>;
+    // Slice size once chunking starts. Smaller than the threshold so several
+    // slices can be in flight without multiplying the server's peak memory.
+    const CHUNK_SIZE = <%= chunkBytes %>;
+    const CHUNK_PARALLEL = <%= chunkParallel %>;
     const CHUNK_ENABLED = <%= chunkedUploads ? 'true' : 'false' %>;
     const MAX_CHUNK_RETRIES = 3;
     const asMb = (bytes) => Math.round(bytes / 1048576);
@@ -188,16 +206,174 @@
         chunkNote.textContent = '';
         return;
       }
-      const chunks = big.reduce((sum, f) => sum + Math.ceil(f.size / CHUNK_THRESHOLD), 0);
+      const chunks = big.reduce((sum, f) => sum + Math.ceil(f.size / CHUNK_SIZE), 0);
+      const inParallel = CHUNK_PARALLEL > 1 ? `, ${CHUNK_PARALLEL} at a time` : '';
       chunkNote.textContent = big.length === 1
-        ? `This file is ${asMb(big[0].size)} MB, so it will be sent in ${chunks} pieces of up to ${asMb(CHUNK_THRESHOLD)} MB and reassembled on the server. Keep this tab open until it finishes.`
-        : `${big.length} of these files are over ${asMb(CHUNK_THRESHOLD)} MB, so they will be sent in ${chunks} pieces and reassembled on the server. Keep this tab open until it finishes.`;
+        ? `This file is ${asMb(big[0].size)} MB, so it will be sent in ${chunks} pieces of up to ${asMb(CHUNK_SIZE)} MB${inParallel} and reassembled on the server. Keep this tab open until it finishes.`
+        : `${big.length} of these files are over ${asMb(CHUNK_THRESHOLD)} MB, so they will be sent in ${chunks} pieces${inParallel} and reassembled on the server. Keep this tab open until it finishes.`;
       chunkNote.hidden = false;
     };
     file.addEventListener('change', describeSelection);
     describeSelection();
 
-    const say = (text) => { if (progress) { progress.hidden = false; progress.textContent = text; } };
+    const track = document.getElementById('progress-track');
+    const bar = document.getElementById('progress-bar');
+    const label = document.getElementById('progress-label');
+    const percent = document.getElementById('progress-percent');
+    const detail = document.getElementById('progress-detail');
+
+    const humanBytes = (bytes) => {
+      if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+      if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+      if (bytes >= 1024) return Math.round(bytes / 1024) + ' KB';
+      return bytes + ' B';
+    };
+    const humanTime = (seconds) => {
+      if (!Number.isFinite(seconds) || seconds < 0) return '';
+      if (seconds < 60) return Math.max(1, Math.round(seconds)) + 's';
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + 'm ' + Math.round(seconds % 60) + 's';
+      return Math.floor(minutes / 60) + 'h ' + (minutes % 60) + 'm';
+    };
+
+    let startedAt = 0;
+    const showProgress = (text, loaded, total) => {
+      if (!progress) return;
+      progress.hidden = false;
+      if (label) label.textContent = text;
+      // No total means the server is working rather than receiving bytes; a
+      // percentage there would be invented, so show a sweep instead.
+      if (!total) {
+        if (track) track.classList.add('indeterminate');
+        if (bar) bar.style.width = '';
+        if (percent) percent.textContent = '';
+        if (detail) detail.textContent = '';
+        return;
+      }
+      if (track) track.classList.remove('indeterminate');
+      const pct = Math.min(100, Math.floor((loaded / total) * 100));
+      if (bar) bar.style.width = pct + '%';
+      if (percent) percent.textContent = pct + '%';
+      if (!detail) return;
+      const elapsed = (Date.now() - startedAt) / 1000;
+      const rate = elapsed > 0.5 ? loaded / elapsed : 0;
+      const eta = rate > 0 && loaded < total ? humanTime((total - loaded) / rate) : '';
+      detail.textContent = humanBytes(loaded) + ' / ' + humanBytes(total)
+        + (rate ? ' · ' + humanBytes(rate) + '/s' : '')
+        + (eta ? ' · ' + eta + ' left' : '');
+    };
+    const hideProgress = () => {
+      if (!progress) return;
+      progress.hidden = true;
+      if (bar) bar.style.width = '0%';
+      if (track) track.classList.remove('indeterminate');
+      if (percent) percent.textContent = '0%';
+      if (detail) detail.textContent = '';
+    };
+
+    // XHR rather than fetch: fetch cannot report upload progress, and the whole
+    // point here is watching bytes leave.
+    const xhrSend = (url, body, headers, onProgress) => new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', url, true);
+      xhr.withCredentials = true;
+      for (const [name, value] of Object.entries(headers || {})) xhr.setRequestHeader(name, value);
+      if (onProgress && xhr.upload) {
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) onProgress(event.loaded, event.total);
+        });
+      }
+      xhr.addEventListener('load', () => resolve({
+        status: xhr.status,
+        responseText: xhr.responseText,
+        responseURL: xhr.responseURL,
+      }));
+      xhr.addEventListener('error', () => reject(new Error('Network error during upload.')));
+      xhr.addEventListener('abort', () => reject(new Error('Upload cancelled.')));
+      xhr.send(body);
+    });
+
+    // Shrink oversized images in the browser before they are sent. This is an
+    // optimisation only: the server still probes, moderates and re-encodes
+    // whatever arrives, and treats it as untrusted either way. Nothing that
+    // decides access, moderation or watermarking moves to the client.
+    // Longest edge, so a 1080p-class ceiling applies in either orientation.
+    const IMAGE_MAX_EDGE = <%= imageMaxEdge %>;
+    const IMAGE_QUALITY = <%= imageQuality %>;
+    const IMAGE_REENCODE_ABOVE = <%= imageReencodeAbove %>;
+    const COMPRESSIBLE = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+    const shrinkImage = async (source) => {
+      if (!COMPRESSIBLE.has(source.type) || typeof createImageBitmap !== 'function') return source;
+      let bitmap;
+      try {
+        bitmap = await createImageBitmap(source);
+      } catch {
+        return source; // undecodable here is the server's problem to report
+      }
+      // Only ever shrinks: a source already under the cap keeps its size.
+      const scale = Math.min(1, IMAGE_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+      // Within the cap and not bulky enough for a re-encode to pay for itself.
+      if (scale === 1 && source.size <= IMAGE_REENCODE_ABOVE) {
+        bitmap.close();
+        return source;
+      }
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', IMAGE_QUALITY));
+      // Keep whichever is actually smaller; re-encoding can inflate a file.
+      if (!blob || blob.size >= source.size) return source;
+      return new File([blob], source.name.replace(/\.[^.]+$/, '') + '.webp', { type: 'image/webp' });
+    };
+
+    // Video is compressed in the browser too, to the same ceiling the server
+    // would apply anyway- doing it here means the bytes shrink before they
+    // cross the network rather than after. It declines far more often than it
+    // runs (unsupported codec, audio it cannot carry through untouched, no
+    // WebCodecs), and every refusal just uploads the original for the server to
+    // normalise as before.
+    const CLIENT_VIDEO = <%= clientVideo ? 'true' : 'false' %>;
+    const VIDEO_OPTS = {
+      maxHeight: <%= clientVideoMaxHeight %>,
+      maxFps: <%= clientVideoMaxFps %>,
+      bitrate: <%= clientVideoBitrate %>,
+    };
+
+    const shrinkVideo = async (source, index, count) => {
+      if (!CLIENT_VIDEO || !source.type.startsWith('video/')) return source;
+      if (!window.NUSVideoCompress) return source;
+      const what = count > 1 ? `video ${index + 1} of ${count}` : 'video';
+      try {
+        return await window.NUSVideoCompress.compress(source, VIDEO_OPTS, (fraction) => {
+          showProgress(`Compressing ${what}`, Math.round(fraction * 1000), 1000);
+        });
+      } catch {
+        return source; // never let a compression failure block the upload
+      }
+    };
+
+    const prepareFiles = async (files) => {
+      const videos = files.filter((f) => f.type.startsWith('video/')).length;
+      const out = [];
+      let videoIndex = 0;
+      for (const item of files) {
+        if (item.type.startsWith('video/')) {
+          startedAt = Date.now();
+          out.push(await shrinkVideo(item, videoIndex, videos));
+          videoIndex += 1;
+        } else {
+          out.push(await shrinkImage(item));
+        }
+      }
+      return out;
+    };
+
     const fields = () => {
       const data = new FormData(form);
       return {
@@ -219,72 +395,145 @@
       return payload;
     };
 
-    const sendChunk = async (id, index, blob) => {
+    const sendChunk = async (id, index, blob, onProgress) => {
       for (let attempt = 1; ; attempt += 1) {
         try {
-          const response = await fetch('/upload/chunk/' + id + '/' + index, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': csrf },
-            body: blob,
-            credentials: 'same-origin',
-          });
-          if (response.ok) return;
-          const payload = await response.json().catch(() => ({}));
+          const response = await xhrSend(
+            '/upload/chunk/' + id + '/' + index,
+            blob,
+            { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': csrf },
+            onProgress
+          );
+          if (response.status >= 200 && response.status < 300) return;
+          let message = 'Upload failed.';
+          try { message = JSON.parse(response.responseText).error || message; } catch { /* not json */ }
           // The server voids a session on a rejected chunk, so retrying a 4xx
           // only wastes time- only transient failures are worth another go.
-          if (response.status < 500 || attempt >= MAX_CHUNK_RETRIES) throw new Error(payload.error || 'Upload failed.');
+          if (response.status < 500 || attempt >= MAX_CHUNK_RETRIES) throw new Error(message);
         } catch (error) {
           if (attempt >= MAX_CHUNK_RETRIES) throw error;
         }
+        // A retried chunk resends from the start, so drop its partial bytes.
+        if (onProgress) onProgress(0, 0);
         await new Promise((resolve) => window.setTimeout(resolve, 500 * attempt));
       }
     };
 
     const chunkedUpload = async (files) => {
       const meta = fields();
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+      showProgress('Preparing…', 0, 0);
       const init = await postJson('/upload/init', {
         _csrf: csrf,
         altcha: new FormData(form).get('altcha') || '',
         files: files.map((f) => ({ mime: f.type, size: f.size })),
       });
 
-      const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
-      let sentBytes = 0;
+      startedAt = Date.now();
+
+      // Flatten every file's slices into one queue so a bounded pool can keep
+      // CHUNK_PARALLEL requests in flight regardless of file boundaries.
+      const queue = [];
       for (let i = 0; i < files.length; i += 1) {
         const upload = init.uploads[i];
-        const current = files[i];
         for (let index = 0; index < upload.totalChunks; index += 1) {
           const start = index * init.chunkBytes;
-          const slice = current.slice(start, Math.min(start + init.chunkBytes, current.size));
-          await sendChunk(upload.id, index, slice);
-          sentBytes += slice.size;
-          say('Uploading… ' + Math.floor((sentBytes / totalBytes) * 100) + '%');
+          queue.push({
+            id: upload.id,
+            index,
+            slice: files[i].slice(start, Math.min(start + init.chunkBytes, files[i].size)),
+          });
         }
       }
 
-      say('Processing…');
+      // Chunks now finish out of order, so progress is the sum of what each
+      // one has sent rather than a running total- a single counter would jump
+      // backwards whenever a retry restarted mid-chunk.
+      const totalChunks = queue.length;
+      const sent = new Map(); // queue position -> bytes delivered so far
+      let completed = 0;
+      let inFlight = 0;
+      const paint = () => {
+        let loaded = 0;
+        for (const value of sent.values()) loaded += value;
+        // With a pool running there is no single "current" segment, so report
+        // how many are finished and how many are actually on the wire.
+        const label = inFlight > 1
+          ? `${completed} of ${totalChunks} segments · ${inFlight} in flight`
+          : `Segment ${Math.min(completed + 1, totalChunks)} of ${totalChunks}`;
+        showProgress(label, loaded, totalBytes);
+      };
+      paint();
+
+      let next = 0;
+      let aborted = null;
+      const worker = async () => {
+        for (;;) {
+          const position = next;
+          next += 1;
+          if (position >= queue.length || aborted) return;
+          const task = queue[position];
+          inFlight += 1;
+          paint();
+          try {
+            await sendChunk(task.id, task.index, task.slice, (loaded) => {
+              sent.set(position, loaded);
+              paint();
+            });
+            sent.set(position, task.slice.size);
+            completed += 1;
+          } catch (error) {
+            aborted = error; // stop the other workers rather than pile on
+            throw error;
+          } finally {
+            inFlight -= 1;
+            paint();
+          }
+        }
+      };
+      await Promise.all(
+        Array.from({ length: Math.min(CHUNK_PARALLEL, queue.length) }, worker)
+      );
+
+      // Watermark probing, moderation and storage all happen now, with no
+      // byte count to report against.
+      showProgress('Processing…', 0, 0);
       const done = await postJson('/upload/complete', {
         _csrf: csrf,
         ids: init.uploads.map((u) => u.id),
         ...meta,
       });
+      showProgress('Finishing…', 0, 0);
       window.location.assign(done.redirect);
     };
 
-    const directUpload = async () => {
-      const response = await fetch(form.action, {
-        method: 'POST',
-        body: new FormData(form),
-        credentials: 'same-origin',
-        redirect: 'follow',
+    // The form's own file input still holds the originals, so a prepared
+    // (shrunk) selection has to be substituted in explicitly.
+    const buildFormData = (files) => {
+      const data = new FormData(form);
+      data.delete('image');
+      for (const item of files) data.append('image', item, item.name);
+      return data;
+    };
+
+    const directUpload = async (files) => {
+      const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+      startedAt = Date.now();
+      const text = files.length > 1 ? `Uploading ${files.length} files` : 'Uploading';
+      showProgress(text, 0, totalBytes);
+      const response = await xhrSend(form.action, buildFormData(files), {}, (loaded, total) => {
+        // Multipart framing makes the wire total slightly larger than the file.
+        showProgress(loaded >= total ? 'Processing…' : text, loaded, loaded >= total ? 0 : total);
       });
-      if (progress) progress.hidden = true;
-      if (response.redirected) {
-        window.location.assign(response.url);
+      if (response.status >= 200 && response.status < 400 && /[?&]uploaded=1/.test(response.responseURL || '')) {
+        showProgress('Finishing…', 0, 0);
+        window.location.assign(response.responseURL);
         return;
       }
+      hideProgress();
+      // An error renders a full HTML page; show it as the old form post did.
       document.open();
-      document.write(await response.text());
+      document.write(response.responseText);
       document.close();
     };
 
@@ -292,15 +541,17 @@
       if (!file.files.length) return;
       event.preventDefault();
       button.disabled = true;
-      button.textContent = 'Checking…';
-      say('Uploading…');
-      const files = Array.from(file.files);
-      const needsChunking = CHUNK_ENABLED && files.some((f) => f.size > CHUNK_THRESHOLD);
+      button.textContent = 'Uploading…';
+      showProgress('Preparing…', 0, 0);
       try {
+        // Compress locally first: fewer bytes on the wire, fewer chunks, and
+        // less work for the server to redo.
+        const files = await prepareFiles(Array.from(file.files));
+        const needsChunking = CHUNK_ENABLED && files.some((f) => f.size > CHUNK_THRESHOLD);
         if (needsChunking) await chunkedUpload(files);
-        else await directUpload();
+        else await directUpload(files);
       } catch (error) {
-        if (progress) progress.hidden = true;
+        hideProgress();
         button.disabled = false;
         button.textContent = 'Upload';
         window.alert(error && error.message ? error.message : 'Upload failed. Please try again.');

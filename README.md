@@ -273,9 +273,29 @@ matching primary keys in D1; back up or test the target database first.
 | `MAX_UPLOAD_HARD_MB` | `4096` | Absolute ceiling for admin per-user upload overrides |
 | `MAX_STORAGE_MB` | `1024` | Default active storage quota per user |
 | `CHUNKED_UPLOAD_ENABLED` | `true` | Slice large files in the browser and reassemble them server-side, so a single request never exceeds the reverse proxy's body limit (Cloudflare: 100 MB on Free/Pro, 200 MB Business, 500 MB Enterprise). Without it, `MAX_UPLOAD_MB` is effectively capped at that limit |
-| `UPLOAD_CHUNK_MB` | `95` | Size of each slice. Files at or below this are posted in one request as before; larger ones are chunked. Keep it comfortably under the proxy limit |
+| `UPLOAD_CHUNK_THRESHOLD_MB` | `95` | Files at or under this are posted in one request as before; larger ones are chunked. Keep it under the proxy limit |
+| `UPLOAD_CHUNK_MB` | `24` | Size of each slice once chunking starts. Deliberately smaller than the threshold so several slices fit in flight at once |
+| `UPLOAD_PARALLEL_CHUNKS` | `4` | Slices uploaded concurrently. Each in-flight slice is buffered whole in memory server-side, so peak usage per uploader is roughly `UPLOAD_CHUNK_MB x UPLOAD_PARALLEL_CHUNKS`. Raising either multiplies memory; `24 x 4` costs about what a single 95 MB chunk did, with 4x the data in flight |
 | `UPLOAD_SESSION_TTL_MIN` | `60` | How long a partially uploaded file may sit before its staged chunks are swept |
 | `RL_UPLOAD_CHUNK_MAX` / `RL_UPLOAD_CHUNK_WINDOW_MIN` | `5000` / `60` | Rate limit for chunk requests. Separate from `RL_UPLOAD_MAX` because one large file is many requests |
+| `FFMPEG_THREADS` / `FFMPEG_MAX_CONCURRENT` | `2` / `2` | CPU ceiling for video work. Each view of a video burns a per-viewer watermark, which is a full re-encode; unbounded, ffmpeg claims every core and a few concurrent viewers saturate the host. The first caps one encode, the second caps how many run at once (the rest queue) |
+| `FFMPEG_PRESET` | `veryfast` | libx264 speed/size trade-off |
+| `FFMPEG_HWACCEL` | `auto` | Hardware video encoding, which is the only thing that removes the CPU floor rather than capping it. `auto` probes what the host actually supports - VideoToolbox (macOS), NVENC/Quick Sync/AMF (Windows), NVENC/VAAPI/Quick Sync (Linux) - verifying each with a real test encode at startup, since drivers are often listed but non-functional. Falls back to libx264 silently, at startup or if an encode later fails. `off` never tries; naming an encoder pins it. In Docker the device must be passed through (`devices: [/dev/dri:/dev/dri]` on Linux) |
+| `FFMPEG_VAAPI_DEVICE` | `/dev/dri/renderD128` | Render node, VAAPI only |
+| `WATERMARK_TILE_SPACING` / `WATERMARK_TILE_PADDING` | `1.02` / `20` | Horizontal and vertical gap between repetitions of the identity mark. Raising the padding is what separates rows: the mark is taller than the default row step, so rows deliberately overlap |
+| `WATERMARK_STAGGER` | `0.5` | Shifts alternate rows sideways by this fraction of the horizontal step, so marks interlock like brickwork rather than stacking into columns. `0` disables it |
+| `RENDER_CACHE_ENABLED` | `true` | Cache rendered video briefly so seeking or reloading does not re-encode the whole file per request. Entries are keyed on the viewer's burned-in identity, not just the view id, so a replayed view id from a different viewer still produces its own render |
+| `RENDER_CACHE_TTL_SEC` / `RENDER_CACHE_MAX_ENTRY_MB` / `RENDER_CACHE_MAX_TOTAL_MB` | `300` / `512` / `2048` | Cache lifetime and size ceilings |
+| `VIDEO_NORMALIZE_ON_UPLOAD` | `true` | Re-encode each upload once into a canonical capped H.264/AAC mp4, so per-view renders skip format guesswork and copy the audio track untouched instead of re-encoding it per viewer |
+| `VIDEO_MAX_HEIGHT` / `VIDEO_MAX_FPS` | `1080` / `30` | Resolution and framerate ceiling applied at upload. Sources already below a limit are never upscaled |
+| `VIDEO_CRF` | `20` | Quality of the stored master: lower is better and larger (`23` is ffmpeg's default). At `20`, 1080p30 lands around 7 Mbps on high-motion material |
+| `VIDEO_VIEW_CRF` | same as `VIDEO_CRF` | Quality of the per-view watermarked render. Views are served at master quality by default; raise it only to trade view quality for view-time CPU and bandwidth |
+| `VIDEO_MAX_BITRATE` / `VIDEO_AUDIO_BITRATE` | `6000k` / `128k` | Video and audio bitrate ceilings. `bufsize` is held equal to `maxrate`; a looser buffer lets the encoder average well past the cap |
+| `CLIENT_IMAGE_MAX_EDGE` / `CLIENT_IMAGE_QUALITY` | `1920` / `0.82` | Browser-side image downscale before upload, capping the longest edge so nothing above 1080p-class resolution is sent (either orientation; smaller sources are never upscaled). Purely an optimisation - the server still probes, moderates and watermarks whatever arrives, so a client that skips it gains nothing |
+| `CLIENT_IMAGE_REENCODE_ABOVE_KB` | `2048` | An image already within the size cap is only re-encoded once it is at least this large |
+| `CLIENT_VIDEO_COMPRESS` | `true` | Compress video in the browser (WebCodecs) before upload, down to the same ceiling the server applies, so the bytes shrink before crossing the network. Audio is remuxed untouched. Declines safely - unsupported codec, audio it cannot carry losslessly, no WebCodecs - and uploads the original for server-side normalisation instead |
+| `CLIENT_VIDEO_MAX_HEIGHT` / `CLIENT_VIDEO_MAX_FPS` | follows `VIDEO_MAX_HEIGHT` / `VIDEO_MAX_FPS` | Client-side ceiling; kept in step with the server's by default |
+| `CLIENT_VIDEO_BITRATE_KBPS` | `6000` | Target bitrate for the browser-side encode |
 | `DISPOSABLE_EMAIL_DOMAINS` | built-in list | Comma-separated disposable/alias email domains to reject at registration. Matches the domain and any subdomain of it, and is merged with the downloaded blocklist below |
 | `DISPOSABLE_LIST_ENABLED` / `DISPOSABLE_REFRESH_HOURS` | `true` / `24` | Download the [disposable-email-domains](https://github.com/disposable-email-domains/disposable-email-domains) community blocklist (~8k domains) and refresh it on this interval. Cached under `DATA_DIR/intel`; matching is entirely local |
 | `DISPOSABLE_LIST_URL` | upstream raw URL | Override the blocklist source (one bare domain per line; `#` comments allowed) |
@@ -373,7 +393,11 @@ Bundled third-party components keep their own licenses:
 
 - **0xProto** font- SIL Open Font License 1.1
   (`public/fonts/0xProto-OFL-LICENSE.txt`, `assets/fonts/OFL.txt`).
-- **ALTCHA** widget- MIT (`public/altcha-LICENSE.txt`).
+- **ALTCHA** widget- MIT (`public/vendor/altcha-LICENSE.txt`).
+- **MP4Box.js**- BSD-3-Clause (`public/vendor/mp4box-LICENSE.txt`). Demuxes video
+  in the browser for client-side compression.
+- **mp4-muxer**- MIT (`public/vendor/mp4-muxer-LICENSE.txt`). Muxes the
+  re-encoded result.
 
 Intel datasets are downloaded at runtime (not bundled) and remain under their
 own terms- review them before deploying:

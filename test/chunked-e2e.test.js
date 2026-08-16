@@ -97,7 +97,43 @@ test('dashboard: the upload script carries the CSP nonce and its chunk settings'
 
   assert.match(html, /const CHUNK_THRESHOLD = \d+;/, 'chunk threshold rendered as a number');
   assert.match(html, /const CHUNK_ENABLED = (true|false);/, 'chunking flag rendered as a boolean');
-  assert.ok(html.includes(`const CHUNK_THRESHOLD = ${config.chunkedUpload.chunkBytes};`), 'threshold matches config');
+  assert.ok(html.includes(`const CHUNK_THRESHOLD = ${config.chunkedUpload.thresholdBytes};`), 'threshold matches config');
+  assert.ok(html.includes(`const CHUNK_SIZE = ${config.chunkedUpload.chunkBytes};`), 'slice size matches config');
+  // The two must stay distinct: slicing at the proxy limit would leave no room
+  // to run several slices at once.
+  assert.ok(config.chunkedUpload.chunkBytes <= config.chunkedUpload.thresholdBytes,
+    'slice size must not exceed the threshold that triggers chunking');
+});
+
+test('dashboard: the rendered upload script is valid JavaScript', async () => {
+  // Template interpolation lands inside a script tag, so a bad local silently
+  // produces a syntax error that only shows up in a browser console.
+  const html = await (await req('/dashboard')).text();
+  const script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/);
+  assert.ok(script, 'dashboard has a nonced inline script');
+  assert.doesNotThrow(() => new Function(script[1]), 'inline upload script parses');
+
+  // The progress indicator's markup and its script must stay in agreement.
+  for (const id of ['progress', 'progress-track', 'progress-bar', 'progress-label', 'progress-percent', 'progress-detail']) {
+    assert.ok(html.includes(`id="${id}"`), `#${id} exists in the markup`);
+    assert.ok(script[1].includes(`'${id}'`), `#${id} is referenced by the script`);
+  }
+  assert.ok(html.includes('class="progress-bar"'), 'progress bar element present');
+  assert.ok(script[1].includes('XMLHttpRequest'), 'upload uses XHR, which can report upload progress');
+  // The indicator must report both how far along it is and which slice is in
+  // flight, so a long multi-segment upload never looks stalled.
+  assert.match(script[1], /percent\.textContent = pct \+ '%'/, 'percentage is rendered');
+  assert.match(script[1], /Segment \$\{[^}]+\} of \$\{totalChunks\}/, 'segment position is rendered');
+  // Chunks are uploaded by a bounded pool, so they complete out of order and
+  // progress must be summed per chunk rather than kept as a running total.
+  assert.match(script[1], /const CHUNK_PARALLEL = \d+;/, 'parallelism rendered as a number');
+  assert.match(script[1], /const CHUNK_SIZE = \d+;/, 'slice size rendered as a number');
+  assert.ok(script[1].includes('for (const value of sent.values()) loaded += value;'),
+    'progress sums in-flight chunks instead of using a running total');
+  // With a pool running there is no single "current" segment to name.
+  assert.match(script[1], /\$\{completed\} of \$\{totalChunks\} segments/,
+    'progress reports completed segment count');
+  assert.match(script[1], /\$\{inFlight\} in flight/, 'progress reports how many are on the wire');
 });
 
 test('chunked upload: a multi-chunk file lands as one stored image', async () => {
@@ -253,4 +289,78 @@ test('chunked upload: reassembled bytes must still be real media', async () => {
   assert.equal(done.status, 400, 'a declared mime type does not make it an image');
   assert.match((await done.json()).error, /not a valid image or video/);
   assert.ok(!db.prepare('SELECT id FROM images WHERE title = ?').get('junk'), 'nothing stored');
+});
+
+test('assets: vendored third-party code is served from /vendor', async () => {
+  // Third-party bundles live under public/vendor/; first-party scripts stay at
+  // the root. Moving one without updating its references breaks silently in the
+  // browser, so both the file and the page that loads it are checked.
+  for (const asset of [
+    '/vendor/altcha.min.js',
+    '/vendor/altcha-obfuscation.min.js',
+    '/vendor/altcha-business.css',
+    '/vendor/mp4box.min.js',
+    '/vendor/mp4-muxer.js',
+  ]) {
+    assert.equal((await req(asset)).status, 200, `GET ${asset}`);
+  }
+  for (const asset of ['/email-reveal.js', '/video-compress.js']) {
+    assert.equal((await req(asset)).status, 200, `GET ${asset}`);
+  }
+  // Old locations must not silently keep working and mask a stale reference.
+  assert.equal((await req('/altcha.min.js')).status, 404, 'old altcha path is gone');
+
+  const dash = await (await req('/dashboard')).text();
+  assert.ok(dash.includes('/vendor/altcha.min.js'), 'widget loads altcha from /vendor');
+  assert.ok(dash.includes('/vendor/altcha-business.css'), 'widget loads altcha css from /vendor');
+  const tos = await (await req('/tos')).text();
+  assert.ok(tos.includes('/vendor/altcha-obfuscation.min.js'), 'legal pages load the module from /vendor');
+});
+
+test('dashboard: client-side video compression is wired up', async () => {
+  const html = await (await req('/dashboard')).text();
+  assert.ok(html.includes('src="/video-compress.js"'), 'compressor script is included');
+  const script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)[1];
+  assert.match(script, /const CLIENT_VIDEO = (true|false);/, 'flag rendered as a boolean');
+  assert.match(script, /maxHeight: \d+/, 'height ceiling rendered as a number');
+  assert.ok(script.includes('NUSVideoCompress'), 'upload path calls the compressor');
+  // A compression failure must never block the upload.
+  assert.ok(script.includes('return source'), 'compression falls back to the original file');
+});
+
+test('chunked upload: concurrent, out-of-order chunks reassemble correctly', async () => {
+  // The browser now runs a bounded pool, so chunks arrive interleaved and out
+  // of order. The server must not care.
+  const png = await bigPng();
+  const init = await req('/upload/init', json({
+    _csrf: csrf,
+    altcha: await solveAltcha(req),
+    files: [{ mime: 'image/png', size: png.length }],
+  }));
+  const { uploads, chunkBytes } = await init.json();
+  const upload = uploads[0];
+  assert.ok(upload.totalChunks > 2, 'need several chunks to interleave');
+
+  // Reverse order, all in flight at once.
+  const indices = Array.from({ length: upload.totalChunks }, (_, i) => i).reverse();
+  const responses = await Promise.all(indices.map((index) => {
+    const slice = png.subarray(index * chunkBytes, Math.min((index + 1) * chunkBytes, png.length));
+    return req(`/upload/chunk/${upload.id}/${index}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream', 'X-CSRF-Token': csrf },
+      body: slice,
+    });
+  }));
+  assert.ok(responses.every((r) => r.status === 200), 'every concurrent chunk accepted');
+
+  const done = await req('/upload/complete', json({
+    _csrf: csrf, ids: [upload.id], title: 'parallel', ttl: '1h',
+  }));
+  assert.equal(done.status, 200, await done.text());
+
+  const row = db.prepare('SELECT * FROM images WHERE title = ? ORDER BY id DESC').get('parallel');
+  assert.ok(row, 'image row written');
+  assert.equal(row.byte_size, png.length, 'reassembled size matches the original exactly');
+  assert.equal(row.width, 900, 'and it is still a decodable image');
+  assert.equal(row.height, 900);
 });

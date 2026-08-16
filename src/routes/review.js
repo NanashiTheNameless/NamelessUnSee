@@ -101,10 +101,10 @@ router.get('/admin/review/:token/image', limiters.admin, requireAdmin, async (re
     materialized = null;
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Disposition', `inline; filename="${img.token}.mp4"`);
-    res.setHeader('Content-Length', String(fs.statSync(outputPath).size));
+    res.setHeader('Content-Length', String((await fs.promises.stat(outputPath)).size));
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'no-store, private, max-age=0');
-    const size = fs.statSync(outputPath).size;
+    const size = (await fs.promises.stat(outputPath)).size;
     const range = req.headers.range;
     let stream;
     if (range) {

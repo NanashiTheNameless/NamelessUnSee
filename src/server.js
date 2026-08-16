@@ -160,6 +160,11 @@ function start() {
   // Disposable-email blocklist: cached copy first, then refreshed on schedule.
   require('./email-domains').init();
 
+  // Decide once, here, whether a hardware video encoder is usable. The probe
+  // spawns ffmpeg synchronously, so doing it now keeps it off the first
+  // viewer's request.
+  try { require('./watermark').warmHardwareProbe(); } catch { /* software encoding */ }
+
   return app.listen(config.port, () => {
     console.log(`[NamelessUnSee] listening on port ${config.port}- base URL ${config.baseUrl}`);
   });
