@@ -8,6 +8,13 @@ on:
 permissions:
   contents: read
 
+# Serialise runs per branch/PR: a newer push waits for the run in flight rather
+# than racing it. cancel-in-progress is false because these runs build images and
+# touch shared caches, so a half-finished run being killed is worse than waiting.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-slim
