@@ -87,6 +87,11 @@ app.use(async (req, res, next) => {
   res.locals.baseUrl = config.baseUrl;
   res.locals.sourceUrl = config.sourceUrl;
   res.locals.altcha = config.altcha;
+  // Every view needs this: when video is off the UI must not offer it, name
+  // it, or imply it is accepted. Already-uploaded videos still render.
+  res.locals.videoUploads = config.video.uploadsEnabled;
+  res.locals.mediaWord = config.video.uploadsEnabled ? 'image or video' : 'image';
+  res.locals.mediaWordPlural = config.video.uploadsEnabled ? 'images and videos' : 'images';
   res.locals.reviewPending = req.user && req.user.role === 'admin' ? (await countReviewPending.get()).n : 0;
   res.locals.reportPending = req.user && req.user.role === 'admin' ? (await countLeakReports.get()).n : 0;
   next();

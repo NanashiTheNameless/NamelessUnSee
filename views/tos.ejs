@@ -2,7 +2,7 @@
 <%- include('partials/legal-head', { pageTitle: pageTitle }) %>
 
   <h1>Terms of Service</h1>
-  <p class="muted">Last updated: 2026-07-28. These terms govern your use of this
+  <p class="muted">Last updated: 2026-08-16. These terms govern your use of this
     NamelessUnSee instance operated by <strong><%= operator.name %></strong><% if (operator.jurisdiction) { %>,
     based in <%= operator.jurisdiction %><% } %>.</p>
 
@@ -13,7 +13,7 @@
   </div>
 
   <h2>1. What this service is</h2>
-  <p>NamelessUnSee lets registered users share content (images and videos) on a
+  <p>NamelessUnSee lets registered users share content (<%= mediaWordPlural %>) on a
     temporary, traceable basis. Each time shared content is viewed, the viewer is
     served a copy that is watermarked with information identifying them (including
     their IP address, approximate location, and device), and the visit is logged.

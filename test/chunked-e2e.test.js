@@ -405,6 +405,20 @@ test('video uploads can be disabled entirely', async () => {
     assert.match((await rejected.json()).error, /Unsupported file type/);
     assert.ok(!dash.includes('video/mp4'), 'the file picker no longer offers video');
     assert.ok(!dash.includes('/video-compress.js'), 'the video compressor is not loaded');
+
+    // No page may so much as name video while it cannot be uploaded. Rendering
+    // code for already-stored videos is exempt- those still have to play.
+    const pages = ['/', '/dashboard', '/tos', '/privacy', '/acknowledgements', '/dashboard/galleries'];
+    for (const page of pages) {
+      const res = await req2(page);
+      if (res.status !== 200) continue;
+      const html = await res.text();
+      const visible = html
+        .replace(/<script[\s\S]*?<\/script>/gi, '')   // inline logic is not UI copy
+        .replace(/<!--[\s\S]*?-->/g, '');
+      const hit = /\bvideos?\b/i.exec(visible);
+      assert.ok(!hit, `${page} still mentions video: ${hit && visible.slice(Math.max(0, hit.index - 60), hit.index + 60)}`);
+    }
   }
 
   if (previous === undefined) delete process.env.VIDEO_UPLOADS_ENABLED;

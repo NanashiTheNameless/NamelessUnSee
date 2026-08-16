@@ -153,7 +153,11 @@ const config = {
     // view re-encodes the whole file to burn in that viewer's watermark. Turn it
     // off and uploads accept images only, which removes ffmpeg from the request
     // path entirely.
-    uploadsEnabled: bool(process.env.VIDEO_UPLOADS_ENABLED, true),
+    // Off unless deliberately enabled. Every view of a video re-encodes the
+    // whole file to burn in that viewer's watermark, so video is the one thing
+    // here that can saturate a host; an operator should opt into that cost
+    // knowingly rather than inherit it.
+    uploadsEnabled: bool(process.env.VIDEO_UPLOADS_ENABLED, false),
     maxHeight: int(process.env.VIDEO_MAX_HEIGHT, 1080),
     maxFps: int(process.env.VIDEO_MAX_FPS, 30),
     crf: int(process.env.VIDEO_CRF, 20),

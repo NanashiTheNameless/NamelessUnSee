@@ -11,7 +11,7 @@
   function fmtDate(ms){ return new Date(ms).toISOString().replace('T',' ').replace(/\..+/,' UTC'); }
 %>
 <div class="wrap">
-  <h1>Your images and videos</h1>
+  <h1>Your <%= mediaWordPlural %></h1>
   <% if (flagged) { %><div class="error upload-result" role="status" data-auto-dismiss="6000">Your upload was flagged by automated moderation and is held pending review by an administrator.</div><% } %>
   <% if (notice && !flagged) { %>
     <div class="notice upload-result" role="status" data-auto-dismiss="4500">
@@ -21,14 +21,14 @@
   <% } %>
 
   <div class="card">
-    <h2 style="margin-top:0">Upload an image or video</h2>
-    <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Select multiple files to create a gallery automatically. Allowed: <%= allowedLabel %>.<% if (!videoUploads) { %> Video uploads are disabled on this instance.<% } %></p>
+    <h2 style="margin-top:0">Upload an <%= mediaWord %></h2>
+    <p class="muted"><%= rank === 'owner' ? 'Owner account: no upload or storage limits.' : ('Max ' + maxMb + ' MB per file. Storage: ' + Math.round(storageUsed / 1048576) + ' / ' + Math.round(storageLimit / 1048576) + ' MB.') %> Select multiple files to create a gallery automatically. Allowed: <%= allowedLabel %>.</p>
     <form id="upload-form" method="post" action="/upload" enctype="multipart/form-data">
       <input type="hidden" name="_csrf" value="<%= csrf %>">
       <label for="title">Label <span class="muted">(optional, for your reference)</span></label>
       <input type="text" id="title" name="title" maxlength="200">
 
-      <label for="image">Image or video file</label>
+      <label for="image"><%= videoUploads ? 'Image or video file' : 'Image file' %></label>
       <input type="file" id="image" name="image" accept="image/png,image/jpeg,image/webp,image/gif,image/avif<% if (videoUploads) { %>,video/mp4,video/webm,video/quicktime,video/ogg<% } %>" multiple required>
       <p id="chunk-note" class="muted" hidden style="margin:.4rem 0 0"></p>
 
@@ -137,7 +137,7 @@
       <input type="hidden" name="_csrf" value="<%= csrf %>">
       <label for="gtitle">Title <span class="muted">(optional)</span></label>
       <input type="text" id="gtitle" name="title" maxlength="200" placeholder="e.g. set for Alex">
-      <label>Pick images/videos</label>
+      <label><%= videoUploads ? 'Pick images/videos' : 'Pick images' %></label>
       <div class="scroll" style="max-width:100%">
         <table>
           <thead>

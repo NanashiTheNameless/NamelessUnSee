@@ -6,13 +6,13 @@
   <% if (typeof deleted !== 'undefined' && deleted) { %>
     <div class="notice">Your account and all of its files have been permanently deleted.</div>
   <% } %>
-  <p class="muted">A transparent-source successor to the now defunct unsee.cc.<br>Share an image or video for a limited time; everyone who views it sees a copy stamped with their own IP, location and device, so if it leaks, you know who leaked it.</p>
+  <p class="muted">A transparent-source successor to the now defunct unsee.cc.<br>Share an <%= mediaWord %> for a limited time; everyone who views it sees a copy stamped with their own IP, location and device, so if it leaks, you know who leaked it.</p>
 
   <div class="card">
     <h2>How it works</h2>
     <ol>
       <li>Sign up for an account. New accounts are held until an admin approves them.</li>
-      <li>Upload an image or video. It is kept temporarily and deletes itself when its time or view limit runs out.</li>
+      <li>Upload an <%= mediaWord %>. It is kept temporarily and deletes itself when its time or view limit runs out.</li>
       <li>Share the link. Each visitor must accept the Terms and Privacy Policy before anything is shown.</li>
       <li>Every view is stamped with that viewer's IP, location and device, and logged for you to review.</li>
     </ol>

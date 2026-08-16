@@ -14,7 +14,7 @@
       <input type="hidden" name="_csrf" value="<%= csrf %>">
       <label for="title">Title <span class="muted">(optional)</span></label>
       <input type="text" id="title" name="title" maxlength="200" placeholder="e.g. Vacation set">
-      <label>Pick images/videos</label>
+      <label><%= videoUploads ? 'Pick images/videos' : 'Pick images' %></label>
       <div class="scroll" style="max-width:100%">
         <table>
           <thead>
